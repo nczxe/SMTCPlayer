@@ -159,7 +159,7 @@ def main():
         t.start()
         time.sleep(0.5)
         print("=" * 60)
-        print("  SMTC Player (Beta)")
+        print("  SMTC Player v1.1.0")
         print("=" * 60)
         print(f"  本地访问: http://127.0.0.1:{actual_port}")
         print(f"  局域网访问: http://{local_ip}:{actual_port}")

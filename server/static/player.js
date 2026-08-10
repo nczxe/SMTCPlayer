@@ -80,12 +80,18 @@ function updateUI(status) {
     currentStatus = status;
     document.getElementById('songTitle').textContent = status.title || '\u672A\u77E5\u6807\u9898';
     document.getElementById('songArtist').textContent = status.artist || '\u672A\u77E5\u827A\u672F\u5BB6';
+
+    const albumArt = document.getElementById('albumArt');
+    albumArt.setAttribute('aria-label', status.title ? `${status.title} 的专辑封面` : '专辑封面');
     updateAlbumArt(status.thumbnail);
 
     const progressPercent = status.duration > 0
         ? (status.position / status.duration) * 100
         : 0;
     document.getElementById('progressFill').style.width = `${progressPercent}%`;
+    const progressBar = document.getElementById('progressBar');
+    progressBar.setAttribute('aria-valuenow', Math.round(progressPercent));
+    progressBar.setAttribute('aria-valuetext', `${formatTime(status.position)} / ${formatTime(status.duration)}`);
     document.getElementById('currentTime').textContent = formatTime(status.position);
     document.getElementById('totalTime').textContent = formatTime(status.duration);
 
@@ -169,23 +175,82 @@ function initVolumeControl() {
     });
 }
 
-// ========== Tab Switching ==========
-document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
 
-        if (btn.dataset.tab === 'playlist') {
-            checkNcmStatus();
-        }
+
+
+
+function updateSearchUrl(query) {
+    const params = new URLSearchParams(window.location.search);
+    if (query) {
+        params.set('q', query);
+    } else {
+        params.delete('q');
+    }
+    window.history.replaceState({ q: query }, '', '?' + params.toString());
+}
+
+function restoreSearchFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const query = params.get('q') || '';
+    const input = document.getElementById('searchInput');
+    if (query && input.value !== query) {
+        input.value = query;
+        searchSongs(query);
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function createSongItem(s, i, context) {
+    const label = `播放 ${escapeHtml(s.name)}`;
+    return `<button class="song-item" data-song-id="${s.id}" data-song-name="${escapeHtml(s.name)}" aria-label="${label}">
+        <div class="song-item-index" aria-hidden="true">${i + 1}</div>
+        <div class="song-item-cover" style="background-image:url('${s.cover || ''}')" aria-hidden="true">${s.cover ? '' : '\u{1F3B5}'}</div>
+        <div class="song-item-info">
+            <div class="song-item-name">${escapeHtml(s.name)}</div>
+            <div class="song-item-artist">${escapeHtml(s.artists)}${s.album ? ' \u00B7 ' + escapeHtml(s.album) : ''}</div>
+        </div>
+        <div class="song-item-duration" aria-hidden="true">${formatDuration(s.duration)}</div>
+    </button>`;
+}
+
+function attachSongItemListeners(container) {
+    container.querySelectorAll('.song-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = parseInt(btn.dataset.songId, 10);
+            const name = btn.dataset.songName;
+            playNcmSong(id, name);
+        });
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const id = parseInt(btn.dataset.songId, 10);
+                const name = btn.dataset.songName;
+                playNcmSong(id, name);
+            }
+        });
     });
-});
+}
+
+function renderSearchResults(songs, total) {
+    const container = document.getElementById('searchResults');
+    if (!songs.length) {
+        container.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">\u{1F50D}</div><div>\u672A\u627E\u5230\u76F8\u5173\u6B4C\u66F2</div></div>';
+        return;
+    }
+    container.innerHTML = songs.map((s, i) => createSongItem(s, i, 'search')).join('');
+    attachSongItemListeners(container);
+}
 
 // ========== Search ==========
 document.getElementById('searchInput').addEventListener('input', function() {
     const query = this.value.trim();
+    updateSearchUrl(query);
     if (searchTimer) clearTimeout(searchTimer);
     if (!query) {
         renderSearchResults([], 0);
@@ -196,43 +261,20 @@ document.getElementById('searchInput').addEventListener('input', function() {
 
 async function searchSongs(keywords) {
     const container = document.getElementById('searchResults');
-    container.innerHTML = '<div class="loading-dots">\u641C\u7D22\u4E2D...</div>';
+    container.innerHTML = '<div class="loading-dots" role="status">\u641C\u7D22\u4E2D…</div>';
     try {
         const resp = await fetch(`/api/ncm/search?q=${encodeURIComponent(keywords)}&limit=30`);
         const data = await resp.json();
         renderSearchResults(data.songs || [], data.songCount || 0);
     } catch (e) {
-        container.innerHTML = '<div class="empty-state"><div class="icon">\u{1F61E}</div><div>\u641C\u7D22\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5</div></div>';
+        container.innerHTML = '<div class="empty-state" role="alert"><div class="icon" aria-hidden="true">\u{1F61E}</div><div>\u641C\u7D22\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5</div></div>';
     }
 }
 
-function renderSearchResults(songs, total) {
-    const container = document.getElementById('searchResults');
-    if (!songs.length) {
-        container.innerHTML = '<div class="empty-state"><div class="icon">\u{1F50D}</div><div>\u672A\u627E\u5230\u76F8\u5173\u6B4C\u66F2</div></div>';
-        return;
-    }
-    let html = '';
-    songs.forEach((s, i) => {
-        html += `<div class="song-item" onclick="playNcmSong(${s.id}, '${escapeHtml(s.name)}')">
-            <div class="song-item-index">${i + 1}</div>
-            <div class="song-item-cover" style="background-image:url('${s.cover || ''}')">${s.cover ? '' : '\u{1F3B5}'}</div>
-            <div class="song-item-info">
-                <div class="song-item-name">${escapeHtml(s.name)}</div>
-                <div class="song-item-artist">${escapeHtml(s.artists)}${s.album ? ' \u00B7 ' + escapeHtml(s.album) : ''}</div>
-            </div>
-            <div class="song-item-duration">${formatDuration(s.duration)}</div>
-        </div>`;
-    });
-    container.innerHTML = html;
-}
 
-function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+
+
+
 
 // ========== Playlist ==========
 async function checkNcmStatus() {
@@ -253,7 +295,7 @@ function updatePlaylistUI() {
         document.getElementById('playlistLoggedIn').classList.remove('hidden');
         document.getElementById('playlistUserInfo').textContent =
             `${ncmUserInfo.nickname || '\u7528\u6237'} \u7684\u6B4C\u5355`;
-        fetchPlaylists();
+        fetchPlaylists().then(() => restorePlaylistFromUrl());
     } else {
         document.getElementById('playlistLoginSection').classList.remove('hidden');
         document.getElementById('playlistLoggedIn').classList.add('hidden');
@@ -263,7 +305,7 @@ function updatePlaylistUI() {
 
 async function fetchPlaylists() {
     const grid = document.getElementById('playlistGrid');
-    grid.innerHTML = '<div class="loading-dots">\u52A0\u8F7D\u6B4C\u5355\u4E2D...</div>';
+    grid.innerHTML = '<div class="loading-dots" role="status">\u52A0\u8F7D\u6B4C\u5355\u4E2D…</div>';
     try {
         const resp = await fetch('/api/ncm/playlists');
         const data = await resp.json();
@@ -274,27 +316,56 @@ async function fetchPlaylists() {
         }
         renderPlaylists(data.playlists || []);
     } catch (e) {
-        grid.innerHTML = '<div class="empty-state"><div class="icon">\u{1F61E}</div><div>\u52A0\u8F7D\u5931\u8D25</div></div>';
+        grid.innerHTML = '<div class="empty-state" role="alert"><div class="icon" aria-hidden="true">\u{1F61E}</div><div>\u52A0\u8F7D\u5931\u8D25</div></div>';
     }
+}
+
+function attachPlaylistCardListeners(grid) {
+    grid.querySelectorAll('.playlist-card').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = parseInt(btn.dataset.playlistId, 10);
+            const name = btn.dataset.playlistName;
+            fetchPlaylistDetail(id, name);
+        });
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const id = parseInt(btn.dataset.playlistId, 10);
+                const name = btn.dataset.playlistName;
+                fetchPlaylistDetail(id, name);
+            }
+        });
+    });
 }
 
 function renderPlaylists(playlists) {
     const grid = document.getElementById('playlistGrid');
     if (!playlists.length) {
-        grid.innerHTML = '<div class="empty-state"><div class="icon">\u{1F4CB}</div><div>\u6682\u65E0\u6B4C\u5355</div></div>';
+        grid.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">\u{1F4CB}</div><div>\u6682\u65E0\u6B4C\u5355</div></div>';
         return;
     }
-    let html = '';
-    playlists.forEach(pl => {
-        html += `<div class="playlist-card" onclick="fetchPlaylistDetail(${pl.id}, '${escapeHtml(pl.name)}')">
-            <div class="playlist-card-cover" style="background-image:url('${pl.cover || ''}')">${pl.cover ? '' : '\u{1F3B5}'}</div>
+    grid.innerHTML = playlists.map(pl =>
+        `<button class="playlist-card" data-playlist-id="${pl.id}" data-playlist-name="${escapeHtml(pl.name)}" aria-label="打开歌单 ${escapeHtml(pl.name)}">
+            <div class="playlist-card-cover" style="background-image:url('${pl.cover || ''}')" aria-hidden="true">${pl.cover ? '' : '\u{1F3B5}'}</div>
             <div class="playlist-card-info">
                 <div class="playlist-card-name">${escapeHtml(pl.name)}</div>
                 <div class="playlist-card-count">${pl.trackCount}\u9996</div>
             </div>
-        </div>`;
-    });
-    grid.innerHTML = html;
+        </button>`
+    ).join('');
+    attachPlaylistCardListeners(grid);
+}
+
+function updatePlaylistUrl(playlistId, playlistName) {
+    const params = new URLSearchParams(window.location.search);
+    if (playlistId) {
+        params.set('playlist', playlistId);
+        if (playlistName) params.set('playlistName', playlistName);
+    } else {
+        params.delete('playlist');
+        params.delete('playlistName');
+    }
+    window.history.replaceState({ playlist: playlistId }, '', '?' + params.toString());
 }
 
 async function fetchPlaylistDetail(playlistId, playlistName) {
@@ -302,37 +373,36 @@ async function fetchPlaylistDetail(playlistId, playlistName) {
     document.getElementById('playlistGrid').parentElement.classList.add('hidden');
     document.getElementById('playlistDetail').classList.remove('hidden');
     document.getElementById('playlistLoggedIn').classList.add('hidden');
+    updatePlaylistUrl(playlistId, playlistName);
 
     const listEl = document.getElementById('playlistSongList');
-    listEl.innerHTML = '<div class="loading-dots">\u52A0\u8F7D\u6B4C\u66F2\u4E2D...</div>';
+    listEl.innerHTML = '<div class="loading-dots" role="status">\u52A0\u8F7D\u6B4C\u66F2\u4E2D…</div>';
     try {
         const resp = await fetch(`/api/ncm/playlist/${playlistId}`);
         const data = await resp.json();
         renderPlaylistSongs(data.tracks || []);
     } catch (e) {
-        listEl.innerHTML = '<div class="empty-state"><div class="icon">\u{1F61E}</div><div>\u52A0\u8F7D\u5931\u8D25</div></div>';
+        listEl.innerHTML = '<div class="empty-state" role="alert"><div class="icon" aria-hidden="true">\u{1F61E}</div><div>\u52A0\u8F7D\u5931\u8D25</div></div>';
+    }
+}
+
+function restorePlaylistFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const playlistId = params.get('playlist');
+    const playlistName = params.get('playlistName') || '';
+    if (playlistId && ncmLoggedIn) {
+        fetchPlaylistDetail(playlistId, playlistName);
     }
 }
 
 function renderPlaylistSongs(tracks) {
     const listEl = document.getElementById('playlistSongList');
     if (!tracks.length) {
-        listEl.innerHTML = '<div class="empty-state"><div class="icon">\u{1F4CB}</div><div>\u6682\u65E0\u6B4C\u66F2</div></div>';
+        listEl.innerHTML = '<div class="empty-state"><div class="icon" aria-hidden="true">\u{1F4CB}</div><div>\u6682\u65E0\u6B4C\u66F2</div></div>';
         return;
     }
-    let html = '';
-    tracks.forEach((t, i) => {
-        html += `<div class="song-item" onclick="playNcmSong(${t.id}, '${escapeHtml(t.name)}')">
-            <div class="song-item-index">${i + 1}</div>
-            <div class="song-item-cover" style="background-image:url('${t.cover || ''}')">${t.cover ? '' : '\u{1F3B5}'}</div>
-            <div class="song-item-info">
-                <div class="song-item-name">${escapeHtml(t.name)}</div>
-                <div class="song-item-artist">${escapeHtml(t.artists)}${t.album ? ' \u00B7 ' + escapeHtml(t.album) : ''}</div>
-            </div>
-            <div class="song-item-duration">${formatDuration(t.duration)}</div>
-        </div>`;
-    });
-    listEl.innerHTML = html;
+    listEl.innerHTML = tracks.map((t, i) => createSongItem(t, i, 'playlist')).join('');
+    attachSongItemListeners(listEl);
 }
 
 function backToPlaylists() {
@@ -340,6 +410,7 @@ function backToPlaylists() {
     document.getElementById('playlistDetail').classList.add('hidden');
     document.getElementById('playlistLoggedIn').classList.remove('hidden');
     document.getElementById('playlistGrid').parentElement.classList.remove('hidden');
+    updatePlaylistUrl(null);
     fetchPlaylists();
 }
 
@@ -358,12 +429,65 @@ async function playNcmSong(songId, songName) {
     setTimeout(fetchStatus, 3500);
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, { pushState = true } = {}) {
     document.querySelectorAll('.tab-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.tab === tabName);
+        const active = b.dataset.tab === tabName;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     document.querySelectorAll('.tab-content').forEach(c => {
         c.classList.toggle('active', c.id === 'tab-' + tabName);
+    });
+
+    if (pushState) {
+        const params = new URLSearchParams(window.location.search);
+        params.set('tab', tabName);
+        window.history.replaceState({ tab: tabName }, '', '?' + params.toString());
+    }
+
+    if (tabName === 'playlist') {
+        checkNcmStatus();
+    }
+}
+
+function restoreTabFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab') || 'nowplaying';
+    if (['nowplaying', 'search', 'playlist'].includes(tab)) {
+        switchTab(tab, { pushState: false });
+    }
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        switchTab(btn.dataset.tab);
+    });
+});
+
+function initProgressBar() {
+    const bar = document.getElementById('progressBar');
+    bar.addEventListener('keydown', (e) => {
+        if (!currentStatus || !currentStatus.duration) return;
+        const step = currentStatus.duration / 20;
+        let newPos = currentStatus.position || 0;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            newPos = Math.min(currentStatus.duration, newPos + step);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            newPos = Math.max(0, newPos - step);
+        } else if (e.key === 'Home') {
+            e.preventDefault();
+            newPos = 0;
+        } else if (e.key === 'End') {
+            e.preventDefault();
+            newPos = currentStatus.duration;
+        }
+        if (newPos !== currentStatus.position) {
+            // Note: server API does not expose seek; this only updates UI for now.
+            currentStatus.position = newPos;
+            updateUI(currentStatus);
+        }
     });
 }
 
@@ -401,6 +525,8 @@ async function doLogout() {
     updatePlaylistUI();
 }
 
+
+
 function showLoginError(msg) {
     const el = document.getElementById('loginError');
     el.textContent = msg;
@@ -419,8 +545,13 @@ function startPolling() {
 document.addEventListener('DOMContentLoaded', async () => {
     await ensureAuth();
     initVolumeControl();
+    initProgressBar();
+    restoreTabFromUrl();
+    restoreSearchFromUrl();
     startPolling();
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/service-worker.js').catch(() => {});
     }
 });
+
+

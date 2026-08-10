@@ -5,11 +5,14 @@ import json
 import argparse
 import struct
 import zlib
+import logging
 from flask import Flask, jsonify, request, send_from_directory
 from smtc_controller import SMTCController
 from netease_watcher import NeteaseWatcherClient
 from volume_controller import VolumeController
 from security import PinAuth, validate_pin, load_config
+
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 def _get_static_folder():
     if getattr(sys, "frozen", False):
@@ -228,9 +231,18 @@ def api_auth_change_pin():
     data = request.get_json(silent=True) or {}
     old_pin = str(data.get("old_pin", ""))
     new_pin = str(data.get("new_pin", ""))
+    retry_after = pin_auth.check_locked(request.remote_addr)
+    if retry_after is not None:
+        return jsonify({
+            "success": False,
+            "error": "TOO_MANY_ATTEMPTS",
+            "retry_after": retry_after,
+        }), 429
     success, error = pin_auth.change_pin(old_pin, new_pin)
     if not success:
+        pin_auth.register_failure(request.remote_addr)
         return jsonify({"success": False, "error": error}), 400
+    pin_auth.reset_failures(request.remote_addr)
     return jsonify({"success": True})
 
 
@@ -249,9 +261,18 @@ def api_auth_reset_pin():
 @app.route("/api/auth/login", methods=["POST"])
 def api_auth_login():
     data = request.get_json(silent=True) or {}
+    retry_after = pin_auth.check_locked(request.remote_addr)
+    if retry_after is not None:
+        return jsonify({
+            "success": False,
+            "error": "TOO_MANY_ATTEMPTS",
+            "retry_after": retry_after,
+        }), 429
     token = pin_auth.login(str(data.get("pin", "")))
     if not token:
+        pin_auth.register_failure(request.remote_addr)
         return jsonify({"success": False, "error": "PIN_INCORRECT"}), 401
+    pin_auth.reset_failures(request.remote_addr)
     return jsonify({"success": True, "token": token})
 
 
@@ -261,7 +282,7 @@ def api_health():
     cfg = load_config()
     return jsonify({
         "ok": True,
-        "version": "1.0.0",
+        "version": "1.1.0",
         "auth_configured": pin_auth.is_configured(),
         "port": resolve_port(),
         "smtc": {
@@ -281,7 +302,7 @@ def api_health():
             "nickname": ncm.nickname if ncm else None,
         },
         "config": {
-            "has_pin": bool(cfg.get("pin_hash")),
+            "has_pin": bool(cfg.get("pin_encrypted") or cfg.get("pin_hash")),
         },
     })
 
@@ -485,6 +506,14 @@ def api_ncm_logout():
     return jsonify({"success": True})
 
 
+@app.route("/api/ncm/clear_cookies", methods=["POST"])
+def api_ncm_clear_cookies():
+    api = get_ncm_api()
+    if api:
+        api.clear_cookies()
+    return jsonify({"success": True, "msg": "Cookie 已清除"})
+
+
 @app.route("/api/ncm/status")
 def api_ncm_status():
     api = get_ncm_api()
@@ -604,7 +633,7 @@ if __name__ == "__main__":
     import subprocess as _sp
     import signal as _sig
 
-    parser = argparse.ArgumentParser(description="SMTC Player (Beta)")
+    parser = argparse.ArgumentParser(description="SMTC Player v1.1.0")
     parser.add_argument("--port", type=int, default=None, help="HTTP 服务端口 (默认: 8888)")
     parser.add_argument("--save-port", action="store_true", help="将 --port 参数保存到 config.json")
     args = parser.parse_args()
@@ -661,10 +690,19 @@ if __name__ == "__main__":
     atexit.register(_stop_watcher)
     _start_watcher()
 
+    # 等待 watcher 就绪后刷新可用性（最多重试 5 次，每次 1 秒）
+    import time as _time
+    for _ in range(5):
+        _time.sleep(1)
+        netease_watcher._last_fail_time = 0
+        netease_watcher._check_available(quiet=True)
+        if netease_watcher.available:
+            break
+
     local_ip = get_local_ip()
 
     print("=" * 60)
-    print("  SMTC Player (Beta) - 媒体控制器服务端")
+    print("  SMTC Player v1.1.0 - 媒体控制器服务端")
     print("=" * 60)
     print(f"  本地访问: http://127.0.0.1:{port}")
     print(f"  局域网访问: http://{local_ip}:{port}")
@@ -687,8 +725,10 @@ if __name__ == "__main__":
 
     print("=" * 60)
     print("  提示: 确保手机/设备与电脑在同一局域网")
-    print("  netease-watcher 已自动启动，提供精确进度和封面")
-    print("  搜索和歌单: 需安装 pycryptodome (pip install pycryptodome)")
+    if netease_watcher.available:
+        print("  netease-watcher 已就绪，提供精确进度和封面")
+    if ncm is None:
+        print("  搜索和歌单: 需安装 pycryptodome (pip install pycryptodome)")
     print("=" * 60)
 
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

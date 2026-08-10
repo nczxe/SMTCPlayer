@@ -1,0 +1,499 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="SMTCPlayer.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SMTCPlayer.WinUI"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 隐藏的锚点：托盘右键菜单显示位置的占位 -->
+        <Border x:Name="TrayMenuAnchor"
+                Width="0" Height="0"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Visibility="Collapsed" />
+
+        <!-- ============ 顶部自定义标题栏（Mica 透出） ============ -->
+        <Grid x:Name="TitleBarGrid"
+              Grid.Row="0"
+              Height="48"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Margin="16,0,0,0"
+                        Spacing="12">
+                <FontIcon Glyph="&#xE8B6;" FontSize="16"
+                          Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                <TextBlock Text="SMTC Player"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TextBlock x:Name="TitleBarStatus"
+                       Grid.Column="2"
+                       Text=""
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       Margin="0,0,16,0" />
+        </Grid>
+
+        <!-- ============ 主内容区（三层互斥显示，避免重叠） ============ -->
+        <Grid Grid.Row="1" x:Name="ContentRoot" Padding="24,8">
+
+            <!-- 1. 启动视图（服务未运行时 唯一 显示） -->
+            <Grid x:Name="StartView" Visibility="Visible">
+                <Border Style="{StaticResource CardPanelStyle}"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Padding="32"
+                        MinWidth="380"
+                        MaxWidth="520">
+                    <StackPanel Spacing="20" HorizontalAlignment="Stretch">
+                        <!-- 顶部图标 -->
+                        <StackPanel Spacing="8" HorizontalAlignment="Center" Margin="0,8,0,0">
+                            <FontIcon Glyph="&#xE8B6;" FontSize="60"
+                                      Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                            <TextBlock Text="SMTC Player"
+                                       Style="{StaticResource TitleTextBlockStyle}"
+                                       HorizontalAlignment="Center" />
+                            <TextBlock Text="SMTC 桥接播放器"
+                                       Style="{StaticResource BodyTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- 分隔线 -->
+                        <Border Height="1"
+                                Background="{ThemeResource CardStrokeColorDefaultBrush}"
+                                Margin="0,4" />
+
+                        <!-- 服务端口 -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="服务端口号"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <NumberBox x:Name="PortInput"
+                                       Value="{x:Bind Vm.Port, Mode=TwoWay}"
+                                       Minimum="1" Maximum="65535"
+                                       SpinButtonPlacementMode="Hidden"
+                                       CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                       HorizontalAlignment="Stretch"
+                                       Padding="12,8" />
+                        </StackPanel>
+
+                        <!-- 启动按钮 -->
+                        <Button Content="{x:Bind Vm.StartButtonText, Mode=OneWay}"
+                                Command="{x:Bind Vm.StartServerCommand}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                HorizontalAlignment="Stretch"
+                                MinHeight="44"
+                                FontSize="{ThemeResource FontSizeBody}">
+                            <Button.KeyboardAccelerators>
+                                <KeyboardAccelerator Key="Enter" Modifiers="None" />
+                            </Button.KeyboardAccelerators>
+                        </Button>
+
+                        <!-- 设置按钮 -->
+                        <Button Click="SettingsButton_Click"
+                                CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                HorizontalAlignment="Stretch"
+                                MinHeight="44"
+                                Padding="16,0">
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                <FontIcon Glyph="&#xE713;" FontSize="14" />
+                                <TextBlock Text="设置"
+                                           Style="{StaticResource BodyTextBlockStyle}" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- 帮助文字 -->
+                        <TextBlock Text="启动后将在局域网开启 Web 远程控制，手机扫码即可暂停 / 切歌 / 调节音量。"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   TextWrapping="WrapWholeWords"
+                                   HorizontalAlignment="Center"
+                                   LineHeight="18" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- 2. 运行视图：竖屏单列布局（窄屏时显示） -->
+            <ScrollViewer x:Name="PortraitView"
+                          Visibility="Collapsed"
+                          Padding="4"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="16" HorizontalAlignment="Center" MaxWidth="480" Margin="0,8">
+
+                    <!-- 封面图（圆角卡片 + Acrylic 阴影卡片感） -->
+                    <Border x:Name="CoverPortrait"
+                            Style="{StaticResource CardPanelStyle}"
+                            HorizontalAlignment="Center"
+                            Width="240" Height="240"
+                            Padding="0">
+                        <Image x:Name="CoverImagePortrait"
+                               Stretch="UniformToFill" />
+                    </Border>
+
+                    <!-- 曲目信息 -->
+                    <StackPanel Spacing="2" HorizontalAlignment="Stretch">
+                        <TextBlock x:Name="TitleTextPortrait"
+                                   Text="{x:Bind Vm.Title, Mode=OneWay, FallbackValue='未在播放'}"
+                                   Style="{StaticResource TitleTextBlockStyle}"
+                                   HorizontalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Vm.Artist, Mode=OneWay, FallbackValue='—'}"
+                                   Style="{StaticResource BodyTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <!-- 进度条 + 时间 -->
+                    <StackPanel Spacing="6">
+                        <ProgressBar Value="{x:Bind Vm.ProgressPercent, Mode=OneWay}"
+                                     Maximum="100" Minimum="0"
+                                     CornerRadius="{ThemeResource CornerRadiusSmall}"
+                                     Height="4"
+                                     ShowPaused="False" />
+                        <Grid>
+                            <TextBlock Text="{x:Bind Vm.PositionText, Mode=OneWay, FallbackValue='0:00'}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Left" />
+                            <TextBlock Text="{x:Bind Vm.DurationText, Mode=OneWay, FallbackValue='0:00'}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- 播放控制（统一按钮样式） -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12">
+                        <Button Command="{x:Bind Vm.PreviousCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind Vm.HasPrevious, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="20" Width="44" Height="44" Padding="0">
+                            <FontIcon Glyph="&#xE892;" FontSize="16" />
+                        </Button>
+                        <Button x:Name="PlayPauseButtonPortrait"
+                                Command="{x:Bind Vm.PlayPauseCommand, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="24" Width="56" Height="56" Padding="0">
+                            <FontIcon x:Name="PlayPauseIconPortrait" Glyph="&#xE768;" FontSize="22" />
+                        </Button>
+                        <Button Command="{x:Bind Vm.NextCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind Vm.HasNext, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="20" Width="44" Height="44" Padding="0">
+                            <FontIcon Glyph="&#xE893;" FontSize="16" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- 音量控制（统一样式） -->
+                    <Grid ColumnSpacing="12" Padding="4,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="MuteButtonPortrait"
+                                Grid.Column="0"
+                                Click="MuteButton_Click"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="18" Width="36" Height="36" Padding="0">
+                            <FontIcon x:Name="VolumeIconPortrait" Glyph="&#xE767;" FontSize="14" />
+                        </Button>
+                        <Slider Grid.Column="1"
+                                Value="{x:Bind Vm.VolumeValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Minimum="0" Maximum="100"
+                                StepFrequency="1"
+                                VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2"
+                                   Text="{x:Bind Vm.VolumeText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   VerticalAlignment="Center"
+                                   MinWidth="40"
+                                   HorizontalAlignment="Right" />
+                    </Grid>
+
+                    <!-- 二维码卡片（Acrylic） -->
+                    <Border x:Name="QrPortrait"
+                            Style="{StaticResource CardPanelStyle}"
+                            HorizontalAlignment="Stretch"
+                            Padding="16">
+                        <StackPanel Spacing="10" HorizontalAlignment="Stretch">
+                            <TextBlock Text="手机扫码连接"
+                                       Style="{StaticResource SubtitleTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center" />
+                            <Image x:Name="QrImagePortrait"
+                                   Width="160" Height="160"
+                                   Stretch="Uniform"
+                                   HorizontalAlignment="Center" />
+                            <HyperlinkButton Content="{x:Bind Vm.LanUrl, Mode=OneWay, FallbackValue=''}"
+                                             Click="Url_Click"
+                                             FontSize="12"
+                                             Padding="0"
+                                             HorizontalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" Margin="0,4,0,0">
+                                <Button Command="{x:Bind Vm.CopyUrlCommand, Mode=OneWay}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                        MinHeight="36" Padding="12,0">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE8C8;" FontSize="12" />
+                                        <TextBlock Text="复制地址" FontSize="12" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Click="SettingsButton_Click"
+                                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                        MinHeight="36" Padding="12,0">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE713;" FontSize="12" />
+                                        <TextBlock Text="设置" FontSize="12" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 停止按钮 -->
+                    <Button x:Name="StopButtonPortrait"
+                            Click="StopServer_Click"
+                            CornerRadius="{ThemeResource CornerRadiusMedium}"
+                            MinHeight="40"
+                            HorizontalAlignment="Stretch"
+                            Margin="8,4">
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE71A;" FontSize="14" />
+                            <TextBlock Text="停止服务"
+                                       Style="{StaticResource BodyTextBlockStyle}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 3. 运行视图：横屏三列布局（宽屏时显示） -->
+            <Grid x:Name="LandscapeView" Visibility="Collapsed" Padding="16,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32*" MinWidth="240" />
+                    <ColumnDefinition Width="38*" MinWidth="320" />
+                    <ColumnDefinition Width="30*" MinWidth="220" />
+                </Grid.ColumnDefinitions>
+
+                <!-- 左列：封面图卡片 -->
+                <Grid Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Border x:Name="CoverLandscape"
+                            Style="{StaticResource CardPanelStyle}"
+                            Width="280" Height="280"
+                            Padding="0">
+                        <Image x:Name="CoverImageLandscape"
+                               Stretch="UniformToFill" />
+                    </Border>
+                </Grid>
+
+                <!-- 中列：曲目信息 + 控制 -->
+                <StackPanel Grid.Column="1" Spacing="16" HorizontalAlignment="Stretch" VerticalAlignment="Center" Padding="24,0">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="{x:Bind Vm.Title, Mode=OneWay, FallbackValue='未在播放'}"
+                                   Style="{StaticResource TitleTextBlockStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Vm.Artist, Mode=OneWay, FallbackValue='—'}"
+                                   Style="{StaticResource BodyTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <ProgressBar Value="{x:Bind Vm.ProgressPercent, Mode=OneWay}"
+                                     Maximum="100" Minimum="0"
+                                     CornerRadius="{ThemeResource CornerRadiusSmall}"
+                                     Height="4" />
+                        <Grid>
+                            <TextBlock Text="{x:Bind Vm.PositionText, Mode=OneWay, FallbackValue='0:00'}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Left" />
+                            <TextBlock Text="{x:Bind Vm.DurationText, Mode=OneWay, FallbackValue='0:00'}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                        <Button Command="{x:Bind Vm.PreviousCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind Vm.HasPrevious, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="20" Width="44" Height="44" Padding="0">
+                            <FontIcon Glyph="&#xE892;" FontSize="16" />
+                        </Button>
+                        <Button x:Name="PlayPauseButtonLandscape"
+                                Command="{x:Bind Vm.PlayPauseCommand, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="24" Width="56" Height="56" Padding="0">
+                            <FontIcon x:Name="PlayPauseIconLandscape" Glyph="&#xE768;" FontSize="22" />
+                        </Button>
+                        <Button Command="{x:Bind Vm.NextCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind Vm.HasNext, Mode=OneWay}"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="20" Width="44" Height="44" Padding="0">
+                            <FontIcon Glyph="&#xE893;" FontSize="16" />
+                        </Button>
+                    </StackPanel>
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="MuteButtonLandscape"
+                                Grid.Column="0"
+                                Click="MuteButton_Click"
+                                Style="{StaticResource AccentButtonStyle}"
+                                CornerRadius="18" Width="36" Height="36" Padding="0">
+                            <FontIcon x:Name="VolumeIconLandscape" Glyph="&#xE767;" FontSize="14" />
+                        </Button>
+                        <Slider Grid.Column="1"
+                                Value="{x:Bind Vm.VolumeValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Minimum="0" Maximum="100"
+                                StepFrequency="1"
+                                VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2"
+                                   Text="{x:Bind Vm.VolumeText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   VerticalAlignment="Center"
+                                   MinWidth="40"
+                                   HorizontalAlignment="Right" />
+                    </Grid>
+                </StackPanel>
+
+                <!-- 右列：二维码卡片 + URL -->
+                <Border x:Name="QrLandscape"
+                        Grid.Column="2"
+                        Style="{StaticResource CardPanelStyle}"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Stretch"
+                        MaxWidth="280">
+                    <StackPanel Spacing="10" HorizontalAlignment="Stretch" Margin="16">
+                        <TextBlock Text="扫码连接"
+                                   Style="{StaticResource SubtitleTextBlockStyle}"
+                                   HorizontalAlignment="Center" />
+                        <Image x:Name="QrImageLandscape"
+                               Width="180" Height="180"
+                               Stretch="Uniform"
+                               HorizontalAlignment="Center" />
+                        <HyperlinkButton Content="{x:Bind Vm.LanUrl, Mode=OneWay, FallbackValue=''}"
+                                         Click="Url_Click"
+                                         FontSize="12"
+                                         Padding="0"
+                                         HorizontalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Spacing="8" Margin="0,4,0,0">
+                            <Button Command="{x:Bind Vm.CopyUrlCommand, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                    HorizontalAlignment="Stretch"
+                                    MinHeight="36" Padding="12,0">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <FontIcon Glyph="&#xE8C8;" FontSize="12" />
+                                    <TextBlock Text="复制地址" FontSize="12" />
+                                </StackPanel>
+                            </Button>
+                            <Button Click="SettingsButton_Click"
+                                    CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                    MinHeight="36" Padding="12,0">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE713;" FontSize="12" />
+                                    <TextBlock Text="设置" FontSize="12" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <Button x:Name="StopButtonLandscape"
+                                Click="StopServer_Click"
+                                CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                MinHeight="40"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,4,0,0">
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                <FontIcon Glyph="&#xE71A;" FontSize="14" />
+                                <TextBlock Text="停止服务"
+                                           Style="{StaticResource BodyTextBlockStyle}" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- ============ 底部状态栏（Acrylic 浮层） ============ -->
+        <Border Grid.Row="2"
+                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="16,8">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="{x:Bind Vm.StatusText, Mode=OneWay, FallbackValue='准备就绪'}"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+
+                <TextBlock Grid.Column="1"
+                           Text="{x:Bind Vm.HealthText, Mode=OneWay, FallbackValue=''}"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                           VerticalAlignment="Center" />
+
+                <Button Grid.Column="2"
+                        Click="SettingsButton_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        Width="32" Height="32" Padding="0"
+                        ToolTipService.ToolTip="设置">
+                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+                </Button>
+
+                <Button Grid.Column="3"
+                        x:Name="TrayButton"
+                        Click="MinimizeToTray_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        Width="32" Height="32" Padding="0"
+                        ToolTipService.ToolTip="最小化到托盘">
+                    <FontIcon Glyph="&#xE949;" FontSize="14" />
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

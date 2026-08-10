@@ -509,6 +509,17 @@ class NCMApi:
                 pass
         print("[NCM] 已退出登录")
 
+    def clear_cookies(self):
+        self.uid = None
+        self.nickname = None
+        self.session.cookies.clear()
+        if os.path.exists(COOKIE_FILE):
+            try:
+                os.remove(COOKIE_FILE)
+            except Exception:
+                pass
+        print("[NCM] Cookie 已清除")
+
 
 _ncm_instance = None
 

@@ -1,0 +1,140 @@
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using SMTCPlayer.Core.Models;
+
+namespace SMTCPlayer.Core.Services;
+
+public class SmtcApiClient : IDisposable
+{
+    private readonly HttpClient _http;
+    private readonly string _host;
+    private string? _authToken;
+
+    public string BaseUrl { get; private set; }
+    public bool HasToken => _authToken != null;
+
+    public SmtcApiClient(string host, int port) : this(host, port, null)
+    {
+    }
+
+    public SmtcApiClient(string host, int port, HttpClient? httpClient)
+    {
+        _host = host;
+        BaseUrl = $"http://{host}:{port}";
+        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+    }
+
+    public async Task<AuthStatus?> GetAuthStatusAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<AuthStatus>($"{BaseUrl}/api/auth/status");
+        }
+        catch { return null; }
+    }
+
+    public async Task<AuthResponse?> SetupPinAsync(string pin)
+    {
+        var result = await PostJsonAsync<AuthResponse>("/api/auth/setup", new { pin });
+        if (result?.Success == true && result.Token != null)
+        {
+            _authToken = result.Token;
+        }
+        return result;
+    }
+
+    public async Task<AuthResponse?> LoginAsync(string pin)
+    {
+        var result = await PostJsonAsync<AuthResponse>("/api/auth/login", new { pin });
+        if (result?.Success == true && result.Token != null)
+        {
+            _authToken = result.Token;
+        }
+        return result;
+    }
+
+    public async Task<AuthResponse?> ChangePinAsync(string oldPin, string newPin)
+    {
+        return await PostJsonAsync<AuthResponse>("/api/auth/change_pin", new { old_pin = oldPin, new_pin = newPin });
+    }
+
+    public async Task<AuthResponse?> ResetPinAsync(string newPin)
+    {
+        return await PostJsonAsync<AuthResponse>("/api/auth/reset_pin", new { new_pin = newPin });
+    }
+
+    public void ClearToken()
+    {
+        _authToken = null;
+    }
+
+    public void SetPort(int port)
+    {
+        BaseUrl = $"http://{_host}:{port}";
+    }
+
+    public async Task<PlayerStatus?> GetStatusAsync()
+    {
+        try
+        {
+            return await GetJsonAsync<PlayerStatus>("/api/status");
+        }
+        catch { return null; }
+    }
+
+    public async Task<bool> SendControlAsync(string action)
+    {
+        var result = await PostJsonAsync<ApiResponse>($"/api/{action}", null);
+        return result?.Success == true;
+    }
+
+    public async Task<bool> SetVolumeAsync(double volume)
+    {
+        var result = await PostJsonAsync<ApiResponse>("/api/volume", new { volume });
+        return result?.Success == true;
+    }
+
+    public async Task<bool> ToggleMuteAsync()
+    {
+        var result = await PostJsonAsync<ApiResponse>("/api/volume/toggle_mute", null);
+        return result?.Success == true;
+    }
+
+    public async Task<bool> ClearNcmCookiesAsync()
+    {
+        var result = await PostJsonAsync<ApiResponse>("/api/ncm/clear_cookies", null);
+        return result?.Success == true;
+    }
+
+    public async Task<HealthStatus?> GetHealthAsync()
+    {
+        try
+        {
+            return await GetJsonAsync<HealthStatus>("/api/health");
+        }
+        catch { return null; }
+    }
+
+    private async Task<T?> GetJsonAsync<T>(string path) where T : class
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{path}");
+        if (_authToken != null)
+            req.Headers.Add("X-SMTC-Token", _authToken);
+        var resp = await _http.SendAsync(req);
+        return await resp.Content.ReadFromJsonAsync<T>();
+    }
+
+    private async Task<T?> PostJsonAsync<T>(string path, object? body) where T : class
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}{path}");
+        if (_authToken != null)
+            req.Headers.Add("X-SMTC-Token", _authToken);
+        if (body != null)
+            req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        var resp = await _http.SendAsync(req);
+        return await resp.Content.ReadFromJsonAsync<T>();
+    }
+
+    public void Dispose() => _http.Dispose();
+}

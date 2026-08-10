@@ -1,7 +1,0 @@
-flask>=2.3.0
-winrt-Windows.Media.Control>=3.0.0; sys_platform == 'win32'
-winrt-Windows.Foundation>=3.0.0; sys_platform == 'win32'
-winrt-Windows.Foundation.Collections>=3.0.0; sys_platform == 'win32'
-winrt-Windows.Storage.Streams>=3.0.0; sys_platform == 'win32'
-pycaw>=20235000; sys_platform == 'win32'
-comtypes>=1.2.0; sys_platform == 'win32'

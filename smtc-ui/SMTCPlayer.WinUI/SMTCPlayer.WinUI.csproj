@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>SMTCPlayer.WinUI</RootNamespace>
+    <AssemblyName>SMTCPlayer.WinUI</AssemblyName>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Unpackaged 部署：免去 MSIX 打包，运行更简单。
+         WindowsAppSDKSelfContained=true 时，MSBuild 会自动注入 Bootstrap 初始化代码，
+         WindowsAppSDKBootstrapInitialize 保持 false（默认）以避免与自动注入的初始化代码冲突。
+         手写 Program.cs 会与自动生成的 Main 冲突导致 XamlCompiler 异常退出。 -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsAppSDKBootstrapInitialize>false</WindowsAppSDKBootstrapInitialize>
+
+    <!-- 启用 PerMonitorV2 高 DPI，避免文字模糊（与 WPF 项目保持一致） -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <Version>1.0.0</Version>
+    <Authors>FR-NEXT</Authors>
+    <Description>SMTC Player - WinUI3 原生界面（Mica + Acrylic）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.250907003" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SMTCPlayer.Core\SMTCPlayer.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 复制 Python 服务端与 netease-watcher 到输出目录（与 WPF 项目保持一致） -->
+    <Content Include="..\..\server\**\*"
+             Exclude="..\..\server\config.json;..\..\server\**\__pycache__\**;..\..\server\**\*.pyc"
+             CopyToOutputDirectory="PreserveNewest" Link="server\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="..\..\netease-watcher\**\*"
+             Exclude="..\..\netease-watcher\**\*.pdb"
+             CopyToOutputDirectory="PreserveNewest" Link="netease-watcher\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

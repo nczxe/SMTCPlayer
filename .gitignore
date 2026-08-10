@@ -15,11 +15,22 @@ venv/
 .idea/
 *.swp
 *.swo
+.vs/
 
 # PyInstaller
 build/
 dist/
 *.spec.bak
+
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.sln.docstates
+logs/
+global.json
 
 # Config (user's local port settings)
 config.json
@@ -30,3 +41,10 @@ Desktop.ini
 
 # Debug symbols
 *.pdb
+
+# Archive folder
+archive/
+
+# Runtime logs (WinUI)
+stderr.log
+stdout.log

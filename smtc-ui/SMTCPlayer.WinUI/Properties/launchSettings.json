@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "SMTCPlayer.WinUI (Unpackaged)": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    }
+  }
+}

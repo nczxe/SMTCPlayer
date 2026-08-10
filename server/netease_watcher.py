@@ -13,18 +13,21 @@ class NeteaseWatcherClient:
         self._retry_interval = 5
         self._check_available()
 
-    def _check_available(self):
+    def _check_available(self, quiet=False):
+        was_available = self._available
         try:
             data = self._fetch()
             if data and "music" in data:
                 self._available = True
                 self._last_data = data
-                print(f"[INFO] Netease Watcher 已连接: {self.base_url}")
+                if not was_available:
+                    print(f"[INFO] Netease Watcher 已连接: {self.base_url}")
                 return
         except Exception:
             pass
         self._available = False
-        print(f"[INFO] Netease Watcher 未检测到 (地址: {self.base_url})")
+        if not quiet:
+            print(f"[INFO] Netease Watcher 未检测到 (地址: {self.base_url})")
 
     def _should_try(self):
         if self._available:

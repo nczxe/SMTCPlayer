@@ -44,21 +44,24 @@ a = Analysis(
     optimize=0,
 )
 
+a.datas = [
+    t for t in a.datas
+    if "tcl_data" not in t[0] or "encoding" not in t[0] or not t[0].endswith(".enc")
+]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="SMTCPlayer",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -66,4 +69,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="SMTCPlayer",
 )

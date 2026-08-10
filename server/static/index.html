@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#1a1a2e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -16,12 +16,15 @@
     <title>SMTC Player</title>
 </head>
 <body>
-    <div class="auth-overlay" id="authOverlay">
+    <a href="#main" class="skip-link">跳转到主内容</a>
+
+    <div class="auth-overlay" id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <form class="auth-panel" id="authForm">
-            <div class="auth-title" id="authTitle">输入访问 PIN</div>
-            <input type="password" id="authPin" class="auth-input" maxlength="16" placeholder="4-16 位 PIN" autocomplete="current-password">
+            <h1 class="auth-title" id="authTitle">输入访问 PIN</h1>
+            <label for="authPin" class="sr-only">访问 PIN</label>
+            <input type="password" id="authPin" class="auth-input" maxlength="16" placeholder="4-16 位 PIN…" autocomplete="off" name="auth-pin" spellcheck="false">
             <button class="btn-primary" id="authSubmit" type="submit">进入控制器</button>
-            <div class="auth-message" id="authMessage"></div>
+            <div class="auth-message" id="authMessage" role="status" aria-live="polite"></div>
         </form>
     </div>
 
@@ -29,23 +32,23 @@
         <div class="loading-spinner"></div>
     </div>
 
-    <div class="container">
-        <div class="tab-nav">
-            <button class="tab-btn active" data-tab="nowplaying">正在播放</button>
-            <button class="tab-btn" data-tab="search">搜索</button>
-            <button class="tab-btn" data-tab="playlist">歌单</button>
+    <div class="container" id="main">
+        <div class="tab-nav" role="tablist" aria-label="页面标签">
+            <button class="tab-btn active" data-tab="nowplaying" role="tab" aria-selected="true" aria-controls="tab-nowplaying" id="tab-btn-nowplaying">正在播放</button>
+            <button class="tab-btn" data-tab="search" role="tab" aria-selected="false" aria-controls="tab-search" id="tab-btn-search">搜索</button>
+            <button class="tab-btn" data-tab="playlist" role="tab" aria-selected="false" aria-controls="tab-playlist" id="tab-btn-playlist">歌单</button>
         </div>
 
-        <div class="tab-content active" id="tab-nowplaying">
-            <div class="album-art" id="albumArt">🎵</div>
+        <div class="tab-content active" id="tab-nowplaying" role="tabpanel" aria-labelledby="tab-btn-nowplaying">
+            <div class="album-art" id="albumArt" role="img" aria-label="专辑封面">🎵</div>
 
             <div class="song-info">
-                <div class="song-title" id="songTitle">加载中...</div>
+                <div class="song-title" id="songTitle">加载中…</div>
                 <div class="song-artist" id="songArtist">-</div>
             </div>
 
             <div class="progress-container">
-                <div class="progress-bar" id="progressBar">
+                <div class="progress-bar" id="progressBar" role="slider" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
                 <div class="time-info">
@@ -55,41 +58,44 @@
             </div>
 
             <div class="controls">
-                <button class="control-btn small" id="prevBtn" onclick="control('previous')">⏮</button>
-                <button class="control-btn large" id="playPauseBtn" onclick="control('play_pause')">▶</button>
-                <button class="control-btn small" id="nextBtn" onclick="control('next')">⏭</button>
+                <button class="control-btn small" id="prevBtn" onclick="control('previous')" aria-label="上一首">⏮</button>
+                <button class="control-btn large" id="playPauseBtn" onclick="control('play_pause')" aria-label="播放/暂停">▶</button>
+                <button class="control-btn small" id="nextBtn" onclick="control('next')" aria-label="下一首">⏭</button>
             </div>
 
             <div class="volume-container">
-                <span class="volume-icon" id="volumeIcon" onclick="toggleMute()">🔊</span>
-                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="50" step="1">
+                <button class="volume-icon" id="volumeIcon" onclick="toggleMute()" aria-label="切换静音">🔊</button>
+                <label for="volumeSlider" class="sr-only">音量</label>
+                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="50" step="1" aria-label="音量">
                 <span class="volume-value" id="volumeValue">50%</span>
             </div>
         </div>
 
-        <div class="tab-content" id="tab-search">
+        <div class="tab-content" id="tab-search" role="tabpanel" aria-labelledby="tab-btn-search">
             <div class="search-bar">
-                <input type="text" class="search-input" id="searchInput" placeholder="搜索歌曲..." autocomplete="off">
-                <span class="search-icon">🔍</span>
+                <label for="searchInput" class="sr-only">搜索歌曲</label>
+                <input type="search" class="search-input" id="searchInput" placeholder="搜索歌曲…" autocomplete="off" name="search-query" inputmode="search">
+                <span class="search-icon" aria-hidden="true">🔍</span>
             </div>
             <div class="song-list" id="searchResults">
                 <div class="empty-state">
-                    <div class="icon">🎶</div>
+                    <div class="icon" aria-hidden="true">🎶</div>
                     <div>输入关键词搜索歌曲</div>
                 </div>
             </div>
         </div>
 
-        <div class="tab-content" id="tab-playlist">
+        <div class="tab-content" id="tab-playlist" role="tabpanel" aria-labelledby="tab-btn-playlist">
             <div id="playlistLoginSection">
                 <p style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:10px;line-height:1.6;">
                     1. 浏览器打开 music.163.com 并登录<br>
-                    2. F12 → Application → Cookies → 找到 <b>MUSIC_U</b><br>
+                    2. F12 → Application → Cookies → 找到 <b translate="no">MUSIC_U</b><br>
                     3. 复制其<b>值</b>粘贴到下方
                 </p>
-                <input type="text" id="loginCookie" placeholder="粘贴 MUSIC_U cookie 值" style="width:100%;padding:12px 16px;margin-bottom:10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:15px;outline:none;">
+                <label for="loginCookie" class="sr-only">MUSIC_U Cookie</label>
+                <input type="text" id="loginCookie" placeholder="粘贴 MUSIC_U cookie 值…" autocomplete="off" name="music-u-cookie" spellcheck="false" style="width:100%;padding:12px 16px;margin-bottom:10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:15px;">
                 <button class="btn-primary" onclick="doLogin('cookie')">Cookie 登录</button>
-                <div id="loginError" style="color:#e74c3c;font-size:13px;text-align:center;margin-top:8px;display:none;"></div>
+                <div id="loginError" role="alert" aria-live="assertive" style="color:#e74c3c;font-size:13px;text-align:center;margin-top:8px;display:none;"></div>
             </div>
             <div id="playlistLoggedIn" class="hidden">
                 <div class="logged-in-bar">
@@ -99,14 +105,14 @@
                 <div class="playlist-grid" id="playlistGrid"></div>
             </div>
             <div id="playlistDetail" class="hidden">
-                <div class="playlist-header" onclick="backToPlaylists()">← 返回歌单列表</div>
+                <button class="playlist-header" onclick="backToPlaylists()">← 返回歌单列表</button>
                 <div class="song-list" id="playlistSongList"></div>
             </div>
         </div>
 
         <div class="status-bar">
             <div class="status-text">
-                <span class="status-dot"></span>
+                <span class="status-dot" aria-hidden="true"></span>
                 <span id="statusText">已连接</span>
             </div>
         </div>

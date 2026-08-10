@@ -1,0 +1,46 @@
+<Application x:Class="SMTCPlayer.Wpf.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Themes/DarkTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- 全局渲染优化：文字/图标清晰化 -->
+            <Style TargetType="TextBlock">
+                <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+                <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
+                <Setter Property="RenderOptions.ClearTypeHint" Value="Enabled"/>
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+            </Style>
+
+            <Style TargetType="Control">
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="RenderOptions.ClearTypeHint" Value="Enabled"/>
+                <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+                <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
+            </Style>
+
+            <Style TargetType="Image">
+                <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality"/>
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+            </Style>
+
+            <Style TargetType="Border">
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="RenderOptions.EdgeMode" Value="Aliased"/>
+            </Style>
+
+            <Style TargetType="FrameworkElement">
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
