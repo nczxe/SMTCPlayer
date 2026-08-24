@@ -373,7 +373,7 @@ class SMTCGui:
         ).pack(side="left")
         version_label = tk.Label(
             header_frame,
-            text="v1.1.0",
+            text="v1.1.1 (build 26082323500S)",
             font=("Segoe UI", 10),
             fg="#667eea",
             bg=BG_PRIMARY,

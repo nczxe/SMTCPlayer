@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌曲进度偏移校准对话框：
+     上半区实时显示当前播放进度（进度条 + 时间，含十分位便于对齐），
+     下半区为偏移量调整（+10ms / +1ms / 输入框 / -1ms / -10ms，上限 ±5s）。
+     调整立即生效预览，点「保存」持久化，「取消」回滚。 -->
+<ContentDialog
+    x:Class="SMTCPlayer.WinUI.Dialogs.PositionOffsetDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="校准播放进度"
+    PrimaryButtonText="保存"
+    CloseButtonText="取消"
+    DefaultButton="Primary">
+
+    <StackPanel Spacing="16" MinWidth="440">
+
+        <!-- ============ 当前播放进度（实时） ============ -->
+        <StackPanel Spacing="8">
+            <TextBlock Text="当前播放进度"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock x:Name="TrackText"
+                       Text="未在播放"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                       TextTrimming="CharacterEllipsis" />
+            <ProgressBar x:Name="PosBar"
+                         Minimum="0" Maximum="1" Value="0"
+                         Height="6"
+                         CornerRadius="{ThemeResource CornerRadiusSmall}" />
+            <Grid>
+                <TextBlock x:Name="PosText"
+                           Text="0:00.0"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Left" />
+                <TextBlock x:Name="DurText"
+                           Text="0:00.0"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Right" />
+            </Grid>
+        </StackPanel>
+
+        <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+        <!-- ============ 偏移量调整 ============ -->
+        <StackPanel Spacing="10">
+            <TextBlock Text="进度偏移（毫秒，最大 ±5 秒）"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <Button x:Name="Plus10Button"
+                        Content="+10ms"
+                        Click="Plus10Button_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinWidth="68" MinHeight="36" />
+                <Button x:Name="Plus1Button"
+                        Content="+1ms"
+                        Click="Plus1Button_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinWidth="68" MinHeight="36" />
+                <NumberBox x:Name="OffsetInput"
+                           Width="120" MinHeight="36"
+                           Minimum="-5000" Maximum="5000"
+                           SmallChange="1" LargeChange="10"
+                           SpinButtonPlacementMode="Hidden"
+                           CornerRadius="{ThemeResource CornerRadiusMedium}"
+                           ValueChanged="OffsetInput_ValueChanged" />
+                <Button x:Name="Minus1Button"
+                        Content="-1ms"
+                        Click="Minus1Button_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinWidth="68" MinHeight="36" />
+                <Button x:Name="Minus10Button"
+                        Content="-10ms"
+                        Click="Minus10Button_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinWidth="68" MinHeight="36" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                <TextBlock Text="正值让进度显示靠前，负值靠后；调整立即生效预览。"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           VerticalAlignment="Center" />
+                <HyperlinkButton Content="重置为 0"
+                                 Click="ResetButton_Click"
+                                 FontSize="12"
+                                 Padding="0"
+                                 VerticalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
+    </StackPanel>
+</ContentDialog>

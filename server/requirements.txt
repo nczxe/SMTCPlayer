@@ -1,4 +1,4 @@
-flask>=2.3.0
+﻿flask>=2.3.0
 winrt-Windows.Media.Control>=3.0.0; sys_platform == 'win32'
 winrt-Windows.Foundation>=3.0.0; sys_platform == 'win32'
 winrt-Windows.Foundation.Collections>=3.0.0; sys_platform == 'win32'
@@ -10,3 +10,4 @@ pycryptodome>=3.18.0
 qrcode>=7.4
 pillow>=10.0
 pystray>=0.19; sys_platform == 'win32'
+numpy>=1.26

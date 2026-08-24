@@ -1,0 +1,11 @@
+{
+  "id": "netease-enhance",
+  "name": "网易云增强",
+  "version": "1.1.1",
+  "author": "FR-NEXT",
+  "description": "网易云增强：搜索/播放、登录状态监控、退出清 Cookie，并托管原创状态监视器 SMTCWatcher 提供精准播放进度（settings: watcher_enabled 开关）。",
+  "assembly": "SMTCPlayer.Plugins.NeteaseEnhance.dll",
+  "entryType": "SMTCPlayer.Plugins.NeteaseEnhance.NeteaseEnhancePlugin",
+  "apiVersion": 1,
+  "capabilities": ["search", "playlists"]
+}

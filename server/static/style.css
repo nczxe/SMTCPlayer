@@ -325,6 +325,75 @@ input:focus-visible {
     margin-bottom: 16px;
 }
 
+.search-provider-row {
+    margin: -8px 0 16px;
+}
+
+.search-provider-select {
+    width: 100%;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.search-provider-select:disabled {
+    opacity: 0.45;
+}
+
+.source-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.source-label {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    letter-spacing: 0.5px;
+}
+
+/* 下拉选项显式配色：部分浏览器在深色主题 + 半透明背景下，
+   关闭态的原生 <select> 文字不渲染（悬停/聚焦才触发重绘），
+   显式给出 option 前景/背景可避免该问题 */
+select option,
+select optgroup {
+    background-color: #1c2340;
+    color: #fff;
+}
+
+.source-select {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    transition: border-color 0.25s;
+}
+
+.source-select:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.source-select:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 .search-input {
     width: 100%;
     padding: 12px 44px 12px 16px;

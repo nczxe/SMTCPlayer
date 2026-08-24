@@ -40,6 +40,12 @@
         </div>
 
         <div class="tab-content active" id="tab-nowplaying" role="tabpanel" aria-labelledby="tab-btn-nowplaying">
+            <div class="source-row">
+                <span class="source-label" aria-hidden="true">来源</span>
+                <label for="sourceSelect" class="sr-only">播放来源</label>
+                <select id="sourceSelect" class="source-select" aria-label="选择播放来源（当前媒体会话）"></select>
+            </div>
+
             <div class="album-art" id="albumArt" role="img" aria-label="专辑封面">🎵</div>
 
             <div class="song-info">
@@ -76,6 +82,10 @@
                 <label for="searchInput" class="sr-only">搜索歌曲</label>
                 <input type="search" class="search-input" id="searchInput" placeholder="搜索歌曲…" autocomplete="off" name="search-query" inputmode="search">
                 <span class="search-icon" aria-hidden="true">🔍</span>
+            </div>
+            <div class="search-provider-row">
+                <label for="searchProvider" class="sr-only">搜索来源</label>
+                <select id="searchProvider" class="search-provider-select" aria-label="搜索来源插件"></select>
             </div>
             <div class="song-list" id="searchResults">
                 <div class="empty-state">

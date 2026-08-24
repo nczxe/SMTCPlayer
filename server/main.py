@@ -1,11 +1,9 @@
 import argparse
 import json
 import os
-import subprocess as _sp
 import sys
 import threading
 import time
-import atexit
 import socket
 from security import get_app_dir as security_app_dir, load_config, save_config, validate_pin, PinAuth
 
@@ -36,60 +34,6 @@ def get_local_ip():
         return ip
     except Exception:
         return "127.0.0.1"
-
-
-import shutil
-
-
-def start_watcher(app_dir):
-    watcher_dir = os.path.join(app_dir, "netease-watcher")
-    watcher_exe = os.path.join(watcher_dir, "netease-watcher.exe")
-
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", "")
-        if meipass:
-            src_dir = os.path.join(meipass, "netease-watcher")
-            src_exe = os.path.join(src_dir, "netease-watcher.exe")
-            if os.path.exists(src_exe):
-                persistent_dir = os.path.join(
-                    os.environ.get("ProgramData", os.path.expanduser("~")),
-                    "SMTCPlayer", "watcher",
-                )
-                os.makedirs(persistent_dir, exist_ok=True)
-                dst_exe = os.path.join(persistent_dir, "netease-watcher.exe")
-                dst_dll = os.path.join(persistent_dir, "wndhok.dll")
-                src_dll = os.path.join(src_dir, "wndhok.dll")
-
-                if not os.path.exists(dst_exe) or (
-                    os.path.getmtime(src_exe) > os.path.getmtime(dst_exe)
-                ):
-                    shutil.copy2(src_exe, dst_exe)
-                    if os.path.exists(src_dll):
-                        shutil.copy2(src_dll, dst_dll)
-                    print(f"[Watcher] 已复制到 {persistent_dir}")
-
-                watcher_exe = dst_exe
-
-    if not os.path.exists(watcher_exe):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        watcher_exe = os.path.join(
-            os.path.dirname(script_dir), "netease-watcher", "netease-watcher.exe"
-        )
-    if os.path.exists(watcher_exe):
-        try:
-            proc = _sp.Popen(
-                [watcher_exe],
-                stdout=_sp.DEVNULL,
-                stderr=_sp.DEVNULL,
-                creationflags=_sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-            print(f"[Watcher] netease-watcher 已启动 (PID: {proc.pid})")
-            return proc
-        except Exception as e:
-            print(f"[Watcher] 启动失败: {e}")
-    else:
-        print("[Watcher] 未找到 netease-watcher.exe")
-    return None
 
 
 def main():
@@ -129,22 +73,6 @@ def main():
         except Exception as e:
             print(f"[Config] 保存配置失败: {e}")
 
-    app_dir = get_app_dir()
-    watcher_proc = start_watcher(app_dir)
-
-    def stop_watcher():
-        if watcher_proc and watcher_proc.poll() is None:
-            try:
-                watcher_proc.terminate()
-                watcher_proc.wait(timeout=3)
-            except Exception:
-                try:
-                    watcher_proc.kill()
-                except Exception:
-                    pass
-
-    atexit.register(stop_watcher)
-
     local_ip = get_local_ip()
 
     def start_flask(flask_port=None):
@@ -159,7 +87,7 @@ def main():
         t.start()
         time.sleep(0.5)
         print("=" * 60)
-        print("  SMTC Player v1.1.0")
+        print("  SMTC Player v1.1.1 (build 26082323500S)")
         print("=" * 60)
         print(f"  本地访问: http://127.0.0.1:{actual_port}")
         print(f"  局域网访问: http://{local_ip}:{actual_port}")

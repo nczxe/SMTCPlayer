@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 示例插件：只允许引用 PluginApi，禁止引用 Core / UI 框架 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\smtc-ui\SMTCPlayer.PluginApi\SMTCPlayer.PluginApi.csproj" />
+  </ItemGroup>
+
+  <!-- 编译后部署到插件分发目录 smtc-ui\plugins\，
+       由 WinUI / WPF 项目以 Content 复制到各自输出目录的 plugins\ 下随程序加载与发布 -->
+  <Target Name="DeployPlugin" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginDeployDir>$(MSBuildThisFileDirectory)..\..\smtc-ui\plugins\netease-enhance\</PluginDeployDir>
+      <!-- 插件自带的独立监视器（PyInstaller 产物；缺失时插件回落 python 脚本） -->
+      <WatcherDistDir>$(MSBuildThisFileDirectory)..\..\dist\frozen-watcher\NeteaseWatcher\</WatcherDistDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(PluginDeployDir)" />
+    <ItemGroup>
+      <PluginBinaries Include="$(OutDir)*.dll" Exclude="$(OutDir)SMTCPlayer.PluginApi.dll" />
+      <WatcherFiles Include="$(WatcherDistDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginBinaries)" DestinationFolder="$(PluginDeployDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)plugin.json" DestinationFolder="$(PluginDeployDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WatcherFiles)"
+          DestinationFiles="@(WatcherFiles->'$(PluginDeployDir)watcher\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="@(WatcherFiles) != ''" />
+  </Target>
+
+</Project>

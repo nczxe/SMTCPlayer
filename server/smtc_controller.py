@@ -2,12 +2,34 @@ import asyncio
 import sys
 import platform
 
+# source_app_user_model_id 子串 → 友好名称（大小写不敏感）
+FRIENDLY_SOURCE_NAMES = [
+    ("spotify", "Spotify"),
+    ("netease", "网易云音乐"),
+    ("cloudmusic", "网易云音乐"),
+    ("qqmusic", "QQ音乐"),
+    ("qq.music", "QQ音乐"),
+    ("kugou", "酷狗音乐"),
+    ("kuwo", "酷我音乐"),
+    ("migu", "咪咕音乐"),
+    ("foobar2000", "foobar2000"),
+    ("potplayer", "PotPlayer"),
+    ("vlc", "VLC"),
+    ("wmplayer", "Windows Media Player"),
+    ("msedge", "Edge 浏览器"),
+    ("chrome", "Chrome 浏览器"),
+    ("firefox", "Firefox 浏览器"),
+]
+
 
 class SMTCController:
     def __init__(self):
         self._manager = None
         self._session = None
         self._available = False
+        self._preferred_source = None   # 用户指定的会话来源（None=自动取第一个）
+        self._cover_cache = {}          # source -> {"key", "mime", "data"}；按曲目缓存 SMTC 封面
+        self._cover_version = 0         # 封面内容版本（变化时递增，用于 URL 缓存穿透）
         self._last_status = {
             "title": "未检测到媒体",
             "artist": "",
@@ -18,6 +40,7 @@ class SMTCController:
             "is_playing": False,
             "has_previous": False,
             "has_next": False,
+            "source": "",
         }
         self._init_smtc()
 
@@ -45,9 +68,14 @@ class SMTCController:
             return None
         try:
             sessions = self._run_async(self._get_sessions_async())
-            if sessions and len(sessions) > 0:
-                return sessions[0]
-            return None
+            if not sessions:
+                return None
+            # 优先返回用户指定的来源；指定来源已消失时回落第一个
+            if self._preferred_source:
+                for s in sessions:
+                    if (s.source_app_user_model_id or "") == self._preferred_source:
+                        return s
+            return sessions[0]
         except Exception as e:
             print(f"[ERROR] 获取会话失败: {e}")
             return None
@@ -80,6 +108,118 @@ class SMTCController:
             pass
         return ""
 
+    # ============== 多会话支持 ==============
+
+    @staticmethod
+    def get_friendly_name(source):
+        """把 source_app_user_model_id 映射为友好名称。"""
+        s = (source or "").lower()
+        if not s:
+            return ""
+        for key, name in FRIENDLY_SOURCE_NAMES:
+            if key in s:
+                return name
+        # 回落：取包名最后一段（如 Foo.Bar_xxx → Bar）
+        head = s.split("_")[0]
+        return head.split(".")[-1].capitalize() if "." in head else (source or "")
+
+    def get_sessions_info(self):
+        """枚举所有 SMTC 会话（含曲目快照与播放状态），供 UI 切换来源。"""
+        if not self._available:
+            return []
+        try:
+            sessions = self._run_async(self._get_sessions_async())
+        except Exception as e:
+            print(f"[ERROR] 枚举会话失败: {e}")
+            return []
+
+        result = []
+        for s in sessions:
+            src = s.source_app_user_model_id or ""
+            entry = {
+                "source": src,
+                "name": self.get_friendly_name(src),
+                "title": "",
+                "artist": "",
+                "is_playing": False,
+            }
+            try:
+                info = self._run_async(s.try_get_media_properties_async())
+                entry["title"] = info.title or ""
+                entry["artist"] = info.artist or ""
+            except Exception:
+                pass
+            try:
+                playback = s.get_playback_info()
+                entry["is_playing"] = int(playback.playback_status) == 4
+            except Exception:
+                pass
+            result.append(entry)
+        return result
+
+    def set_preferred_source(self, source):
+        """指定激活会话（空串恢复自动）。"""
+        self._preferred_source = (source or "").strip() or None
+
+    def get_preferred_source(self):
+        return self._preferred_source or ""
+
+    def get_active_source(self):
+        """当前实际使用的会话来源 id。"""
+        try:
+            session = self._get_session()
+            return (session.source_app_user_model_id or "") if session else ""
+        except Exception:
+            return ""
+
+    # ============== SMTC 封面 ==============
+
+    async def _read_thumbnail(self, ref):
+        """读取 RandomAccessStreamReference 封面为 (mime, bytes)；失败/无图返回 None。"""
+        if not ref:
+            return None
+        try:
+            import winrt.windows.storage.streams as wss
+        except ImportError:
+            print("[WARN] 缺少 winrt-Windows.Storage.Streams，无法读取 SMTC 专辑封面")
+            return None
+        try:
+            stream = await ref.open_read_async()
+            size = int(stream.size)
+            if size <= 0 or size > 3 * 1024 * 1024:
+                return None
+            reader = wss.DataReader(stream.get_input_stream_at(0))
+            await reader.load_async(size)
+            raw = None
+            try:
+                # winrt v2：read_bytes(count) 直接返回 bytes/list
+                raw = reader.read_bytes(size)
+                if not isinstance(raw, (bytes, bytearray, list)):
+                    raw = None
+            except (TypeError, ValueError):
+                raw = None
+            if raw is None:
+                # winrt v3：需要传入预分配缓冲区填充
+                buf = bytearray(size)
+                reader.read_bytes(buf)
+                raw = buf
+            data = bytes(bytearray(raw))
+            mime = (getattr(stream, "content_type", "") or "image/png").split(";")[0].strip()
+            if not mime.startswith("image/"):
+                mime = "image/png"
+            return mime, data
+        except Exception as e:
+            print(f"[WARN] 读取封面失败: {e}")
+            return None
+
+    def get_active_cover(self):
+        """当前会话封面 (mime, bytes, version)；无则 None。"""
+        src = self.get_active_source()
+        cached = self._cover_cache.get(src)
+        if cached and cached.get("data"):
+            return cached["mime"], cached["data"], self._cover_version
+        return None
+
     def get_status(self):
         if not self._available:
             return self._last_status
@@ -93,6 +233,7 @@ class SMTCController:
                 self._last_status["artist"] = ""
                 self._last_status["position"] = 0
                 self._last_status["duration"] = 0
+                self._last_status["source"] = ""
                 return self._last_status
 
             info = self._run_async(self._get_media_info_async(session))
@@ -132,6 +273,7 @@ class SMTCController:
                 "is_playing": int(playback.playback_status) == 4,
                 "has_previous": bool(playback.controls.is_previous_enabled),
                 "has_next": bool(playback.controls.is_next_enabled),
+                "source": info.get("source", ""),
             }
             return self._last_status
         except Exception as e:
@@ -140,12 +282,32 @@ class SMTCController:
 
     async def _get_media_info_async(self, session):
         info = await session.try_get_media_properties_async()
+
+        source = ""
+        try:
+            source = session.source_app_user_model_id or ""
+        except Exception:
+            pass
+
+        # 封面按曲目缓存：曲目变化时才重新读取 SMTC 缩略图
+        key = (info.title or "", info.artist or "", info.album_title or "")
+        cached = self._cover_cache.get(source)
+        if cached is None or cached["key"] != key:
+            thumb = await self._read_thumbnail(info.thumbnail)
+            self._cover_cache[source] = {
+                "key": key,
+                "mime": thumb[0] if thumb else None,
+                "data": thumb[1] if thumb else None,
+            }
+            self._cover_version += 1
+
         return {
             "title": info.title or "未知标题",
             "artist": info.artist or "未知艺术家",
             "album_title": info.album_title or "",
             "album_artist": info.album_artist or "",
             "track_number": info.track_number,
+            "source": source,
         }
 
     def play_pause(self):

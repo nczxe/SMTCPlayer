@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 契约程序集保持零依赖：插件与宿主共享同一份，禁止引用 Core 或任何 UI 框架 -->
+  </PropertyGroup>
+
+</Project>

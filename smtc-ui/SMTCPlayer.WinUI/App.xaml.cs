@@ -10,6 +10,8 @@ namespace SMTCPlayer.WinUI;
 public partial class App : Application
 {
     private MainWindow? _mainWindow;
+    private static Mutex? _instanceMutex;
+    private static EventWaitHandle? _activateSignal;
 
     public App()
     {
@@ -39,6 +41,20 @@ public partial class App : Application
         try { Logger.Init(); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Logger 初始化失败：{ex}"); }
 
+        // 单实例守卫：重复启动时激活既有实例后立即退出，
+        // 避免多套 服务端/监视器 子进程并存与托盘实例堆积
+        const string MutexName = @"Local\SMTCPlayer.WinUI.Instance";
+        const string EventName = @"Local\SMTCPlayer.WinUI.Activate";
+        _instanceMutex = new Mutex(true, MutexName, out var createdNew);
+        _activateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
+        if (!createdNew)
+        {
+            Logger.Info("检测到已有实例运行，激活其窗口后退出本次启动");
+            _activateSignal.Set();
+            Environment.Exit(0);
+            return;
+        }
+
         Logger.Info("=== WinUI 应用启动 ===");
 
         Dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -46,6 +62,21 @@ public partial class App : Application
         _mainWindow = new MainWindow();
         MainWindowInstance = _mainWindow;
         _mainWindow.Activate();
+
+        // 后台监听"激活"信号：把已有实例从托盘唤起
+        var signalThread = new Thread(() =>
+        {
+            while (_activateSignal.WaitOne())
+            {
+                Dispatcher.TryEnqueue(() =>
+                {
+                    try { MainWindowInstance?.BringToFrontFromExternalLaunch(); }
+                    catch (Exception ex) { Logger.Warn($"激活既有实例失败: {ex.Message}"); }
+                });
+            }
+        })
+        { IsBackground = true, Name = "single-instance-activate" };
+        signalThread.Start();
     }
 
     private static void OnWinUIUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)

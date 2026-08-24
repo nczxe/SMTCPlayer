@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -22,13 +22,16 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <WindowsAppSDKBootstrapInitialize>false</WindowsAppSDKBootstrapInitialize>
+    <SelfContained>true</SelfContained>
 
     <!-- 启用 PerMonitorV2 高 DPI，避免文字模糊（与 WPF 项目保持一致） -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
 
-    <Version>1.0.0</Version>
     <Authors>FR-NEXT</Authors>
     <Description>SMTC Player - WinUI3 原生界面（Mica + Acrylic）</Description>
+
+    <!-- 仅保留中英文语言资源：MUI 要求语言文件夹与主 DLL 同级且以语言名命名，
+         无法合并进子文件夹，因此通过白名单裁剪其余 ~82 个语言目录 -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,16 +43,79 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SMTCPlayer.Core\SMTCPlayer.Core.csproj" />
+    <!-- 仅保证构建顺序：先编译插件项目并部署到 ..\plugins\（分发目录），再由下方 Content 复制进输出目录 -->
+    <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.NeteaseEnhance\SMTCPlayer.Plugins.NeteaseEnhance.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.SpotifySupport\SMTCPlayer.Plugins.SpotifySupport.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 复制 Python 服务端与 netease-watcher 到输出目录（与 WPF 项目保持一致） -->
+    <!-- 复制 Python 服务端到输出目录（与 WPF 项目保持一致） -->
     <Content Include="..\..\server\**\*"
              Exclude="..\..\server\config.json;..\..\server\**\__pycache__\**;..\..\server\**\*.pyc"
              CopyToOutputDirectory="PreserveNewest" Link="server\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Content Include="..\..\netease-watcher\**\*"
-             Exclude="..\..\netease-watcher\**\*.pdb"
-             CopyToOutputDirectory="PreserveNewest" Link="netease-watcher\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- 插件分发目录 → 输出目录 plugins\（PluginHost 启动时扫描 BaseDirectory\plugins） -->
+    <Content Include="..\plugins\**\*"
+             CopyToOutputDirectory="PreserveNewest" Link="plugins\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- 内置无头 Python 服务端（PyInstaller 产物，build.bat 先行构建；缺失时回落系统 Python） -->
+    <Content Include="..\..\dist\frozen-server\SMTCPlayerServer\SMTCPlayerServer.exe"
+             Condition="Exists('..\..\dist\frozen-server\SMTCPlayerServer\SMTCPlayerServer.exe')"
+             CopyToOutputDirectory="PreserveNewest" Link="server\SMTCPlayerServer.exe" />
+    <Content Include="..\..\dist\frozen-server\SMTCPlayerServer\_internal\**\*"
+             CopyToOutputDirectory="PreserveNewest" Link="server\_internal\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <!-- 发布期兜底：把 XAML 编译产物（xbf）与应用资源索引（pri）复制进 publish 目录。
+       缺失会导致安装版启动即 XamlParseException（开发目录因 bin 内含这些文件而正常） -->
+  <Target Name="CopyXamlAssetsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_XbfFiles Include="$(OutDir)*.xbf" />
+      <_PriFile Include="$(OutDir)$(AssemblyName).pri" Condition="Exists('$(OutDir)$(AssemblyName).pri')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_XbfFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="@(_XbfFiles) != ''" />
+    <Copy SourceFiles="@(_PriFile)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="@(_PriFile) != ''" />
+    <Message Text="[CopyXamlAssetsToPublish] xbf=@(_XbfFiles->Count()) pri=@(_PriFile->Count())" Importance="high" />
+  </Target>
+
+  <!-- 发布期兜底：把内置服务端拷进 publish\server\（Content 通配符在解析期求值，
+       全新环境首次构建可能晚于 PyInstaller 产物生成） -->
+  <Target Name="CopyFrozenServer" AfterTargets="Publish">
+    <ItemGroup>
+      <_FrozenFiles Include="..\..\dist\frozen-server\SMTCPlayerServer\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FrozenFiles)"
+          DestinationFiles="@(_FrozenFiles->'$(PublishDir)server\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="@(_FrozenFiles) != ''" />
+  </Target>
+
+  <!-- 兜底：Content 通配符在项目解析期求值，全新克隆的首次构建可能晚于插件部署；
+       此 Target 在执行期拷贝，顺序由上面的 ReferenceOutputAssembly=false 引用保证 -->
+  <Target Name="CopyPluginDir" AfterTargets="Build">
+    <ItemGroup>
+      <PluginDistFiles Include="..\plugins\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginDistFiles)"
+          DestinationFiles="@(PluginDistFiles->'$(OutDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- 发布后裁剪语言文件夹：仅保留 zh-CN / zh-TW / en-us（与 SatelliteResourceLanguages 白名单一致）。
+       搜索模式限定 *-*（语言标签均含连字符），避免误删 server / plugins -->
+  <Target Name="TrimLocaleFolders" AfterTargets="Publish">
+    <PropertyGroup>
+      <_PubDir>$([MSBuild]::EnsureTrailingSlash('$(PublishDir)'))</_PubDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_KeepLang Include="zh-CN;zh-TW;en-us" />
+      <!-- 项目自有子目录显式保护，防止被当作语言目录误删 -->
+      <_KeepLang Include="server;plugins" />
+      <_LangDir Include="$([System.IO.Directory]::GetDirectories('$(_PubDir)','*-*'))" />
+      <_LangDirToRemove Include="@(_LangDir)"
+                        Condition="@(_LangDir) != ''"
+                        Exclude="@(_KeepLang->'$(_PubDir)%(Identity)')" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_LangDirToRemove)" />
+    <Message Text="[TrimLocaleFolders] removed @(_LangDirToRemove->Count()) locale folders, kept: @(_KeepLang)" Importance="high" />
+  </Target>
 
 </Project>

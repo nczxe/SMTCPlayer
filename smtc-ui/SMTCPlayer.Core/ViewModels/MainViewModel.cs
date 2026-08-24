@@ -2,7 +2,9 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using SMTCPlayer.Core.Models;
+using SMTCPlayer.Core.Plugins;
 using SMTCPlayer.Core.Services;
+using SMTCPlayer.PluginApi;
 
 namespace SMTCPlayer.Core.ViewModels;
 
@@ -13,7 +15,9 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly IClipboardService? _clipboard;
     private readonly SynchronizationContext? _syncContext;
     private System.Timers.Timer? _pollTimer;
+    private System.Timers.Timer? _pluginJobTimer;
     private int _port;
+    private MediaSnapshot? _lastSnapshot;
 
     private bool _isServerRunning;
     private string _statusText = "";
@@ -28,8 +32,6 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _smtcAvailable;
     private bool _watcherAvailable;
     private bool _volumeAvailable;
-    private bool _ncmLoggedIn;
-    private string _ncmNickname = "";
     private long _lastVolumeManipulatedAt;
     private long _lastPlaybackManipulatedAt;
 
@@ -42,6 +44,13 @@ public class MainViewModel : INotifyPropertyChanged
         _syncContext = SynchronizationContext.Current; // 捕获 UI 线程同步上下文
         _playerStatus = new PlayerStatus();
         _port = port > 0 ? port : 8888;
+
+        // 插件宿主：SMTC 变化 → 轮询 diff → 广播事件 → 所有插件
+        PluginHost = new PluginHost(api);
+        _ = PluginHost.InitializeAsync();
+
+        // 启动静默检查更新（24 小时节流；只检查提示，不自动下载安装）
+        _ = RaiseStartupUpdateIfAnyAsync();
 
         StartServerCommand = new RelayCommand(async _ =>
         {
@@ -116,11 +125,6 @@ public class MainViewModel : INotifyPropertyChanged
             }
             catch (Exception ex) { Logger.Warn($"复制 URL 失败: {ex.Message}"); }
         }, _ => !string.IsNullOrEmpty(LanUrl));
-        ClearCookiesCommand = new RelayCommand(async _ =>
-        {
-            try { await ClearNcmCookiesAsync(); }
-            catch (Exception ex) { Logger.Warn($"清除 Cookie 失败: {ex.Message}"); }
-        }, _ => IsServerRunning);
 
         StartButtonText = "启动服务";
     }
@@ -134,6 +138,7 @@ public class MainViewModel : INotifyPropertyChanged
         IsServerRunning = false;
         LanUrl = "";
         StatusText = "服务已停止";
+        PluginHost.PublishServerState(false);
     }
 
     public int Port
@@ -155,7 +160,6 @@ public class MainViewModel : INotifyPropertyChanged
             ((RelayCommand)NextCommand).RaiseCanExecuteChanged();
             ((RelayCommand)PreviousCommand).RaiseCanExecuteChanged();
             ((RelayCommand)ToggleMuteCommand).RaiseCanExecuteChanged();
-            ((RelayCommand)ClearCookiesCommand).RaiseCanExecuteChanged();
         }
     }
 
@@ -191,11 +195,47 @@ public class MainViewModel : INotifyPropertyChanged
         set { _playerStatus = value; OnPropertyChanged(); }
     }
 
+    /// <summary>
+    /// 歌曲进度偏移（秒）：当网易云增强监视器读取的进度与实际播放位置存在微小偏差时，
+    /// 由用户手动校准。仅对 watcher 提供的进度生效（NeteaseWatcherActive），
+    /// 不影响其他 SMTC 音源。UI 层负责持久化并在启动/调整时写入此属性。
+    /// </summary>
+    public double PositionOffsetSeconds { get; set; }
+
+    /// <summary>插件宿主（供 UI 层读取插件列表 / 切换启用状态）。</summary>
+    public PluginHost PluginHost { get; }
+
+    /// <summary>启动静默检查发现新版本时触发（已 marshal 到创建 ViewModel 的线程）。</summary>
+    public event Action<UpdateInfo>? UpdateAvailable;
+
+    /// <summary>启动静默检查更新：24 小时节流，仅提示不自动下载。</summary>
+    private async Task RaiseStartupUpdateIfAnyAsync()
+    {
+        try
+        {
+            var checker = new UpdateChecker();
+            var info = await checker.TryGetPendingStartupUpdateAsync();
+            if (info == null) return;
+
+            Logger.Info($"启动检查发现新版本 v{info.LatestVersion}（当前 v{info.CurrentVersion}），等待 UI 提醒");
+            var handler = UpdateAvailable;
+            if (handler == null) return;
+            if (_syncContext != null) _syncContext.Post(_ => handler(info), null);
+            else handler(info);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"启动检查更新异常: {ex.Message}");
+        }
+    }
+
     public double VolumeValue
     {
         get => _volumeValue;
         set
         {
+            // 值未变化时不通知：轮询每秒都会带回音量快照，避免 UI 层重复响应刷日志
+            if (Math.Abs(_volumeValue - value) < 0.01) return;
             _volumeValue = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(VolumeText));
@@ -209,6 +249,7 @@ public class MainViewModel : INotifyPropertyChanged
         get => _isMuted;
         set
         {
+            if (_isMuted == value) return;
             _isMuted = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(VolumeText));
@@ -226,6 +267,7 @@ public class MainViewModel : INotifyPropertyChanged
     // WPF 兼容的派生属性（直通 PlayerStatus）
     public string Title => PlayerStatus?.Title ?? "";
     public string Artist => PlayerStatus?.Artist ?? "";
+    public string AlbumTitle => PlayerStatus?.AlbumTitle ?? "";
     public bool IsPlaying => PlayerStatus?.IsPlaying ?? false;
     public bool HasPrevious => PlayerStatus?.HasPrevious ?? false;
     public bool HasNext => PlayerStatus?.HasNext ?? false;
@@ -235,7 +277,7 @@ public class MainViewModel : INotifyPropertyChanged
 
     public bool IsAuthenticated => _api.HasToken;
     public string HealthText =>
-        $"SMTC {(_smtcAvailable ? "✓" : "✗")} · Watcher {(_watcherAvailable ? "✓" : "✗")} · 音量 {(_volumeAvailable ? "✓" : "✗")} · NCM {(_ncmLoggedIn ? _ncmNickname : "未登录")}";
+        $"SMTC {(_smtcAvailable ? "✓" : "✗")} · Watcher {(_watcherAvailable ? "✓" : "✗")} · 音量 {(_volumeAvailable ? "✓" : "✗")}";
 
     public ICommand StartServerCommand { get; }
     public ICommand StopServerCommand { get; }
@@ -244,7 +286,6 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand PreviousCommand { get; }
     public ICommand ToggleMuteCommand { get; }
     public ICommand CopyUrlCommand { get; }
-    public ICommand ClearCookiesCommand { get; }
 
     private async Task StartServerAsync()
     {
@@ -299,8 +340,21 @@ public class MainViewModel : INotifyPropertyChanged
                 }
             };
             _pollTimer.Start();
+
+            // 插件任务桥轮询（网页端搜索/播放请求经 Flask 队列转来，400ms 取件保证响应速度）
+            _pluginJobTimer?.Stop();
+            _pluginJobTimer?.Dispose();
+            _pluginJobTimer = new System.Timers.Timer(400);
+            _pluginJobTimer.Elapsed += (_, _) =>
+            {
+                try { PluginHost.PollServerJobsAsync().GetAwaiter().GetResult(); }
+                catch { /* 桥接异常忽略，下轮重试 */ }
+            };
+            _pluginJobTimer.Start();
+
             _ = PollStatusAsync();
             _ = PollHealthAsync();
+            PluginHost.PublishServerState(true);
         }
         catch (InvalidOperationException ex)
         {
@@ -321,24 +375,6 @@ public class MainViewModel : INotifyPropertyChanged
     public async Task<AuthResponse?> ResetPinAsync(string newPin) => await _api.ResetPinAsync(newPin);
 
     public void ClearAuth() => _api.ClearToken();
-
-    public async Task<bool> ClearNcmCookiesAsync()
-    {
-        Logger.Info("清除网易云 Cookie");
-        var ok = await _api.ClearNcmCookiesAsync();
-        if (ok)
-        {
-            _ncmLoggedIn = false;
-            _ncmNickname = "";
-            OnPropertyChanged(nameof(HealthText));
-            Logger.Info("网易云 Cookie 已清除");
-        }
-        else
-        {
-            Logger.Warn("清除网易云 Cookie 失败");
-        }
-        return ok;
-    }
 
     // ============== 本地操作保护期 ==============
 
@@ -371,6 +407,10 @@ public class MainViewModel : INotifyPropertyChanged
         if (Interlocked.Exchange(ref _polling, 1) == 1) return;
         try
         {
+            // 上报插件聚合能力（插件启停后 1 秒内随轮询生效；"none" 表示显式清空）
+            var caps = PluginHost.GetActiveCapabilities();
+            _api.CapabilitiesHeader = caps.Count > 0 ? string.Join(",", caps) : "none";
+
             var status = await _api.GetStatusAsync();
             if (status != null)
             {
@@ -383,21 +423,34 @@ public class MainViewModel : INotifyPropertyChanged
                     status.IsPlaying = _playerStatus.IsPlaying;
                 }
 
+                // 进度偏移校准：仅修正网易云增强监视器提供的进度（内存扫描时钟可能存在微小漂移）
+                if (status.NeteaseWatcherActive && Math.Abs(PositionOffsetSeconds) > 0.0001)
+                {
+                    var corrected = status.Position + PositionOffsetSeconds;
+                    corrected = status.Duration > 0
+                        ? Math.Clamp(corrected, 0, status.Duration)
+                        : Math.Max(0, corrected);
+                    status.Position = corrected;
+                }
+
                 PlayerStatus = status;
 
-                // 如果处于音量保护期，保留本地音量/静音状态
+                // 如果处于音量保护期，保留本地音量/静音状态；值无变化时不发通知（防刷屏）
                 if (!IsVolumeProtected())
                 {
+                    bool volChanged = Math.Abs(_volumeValue - status.Volume) >= 0.01;
+                    bool muteChanged = _isMuted != status.Muted;
                     _volumeValue = status.Volume;
                     _isMuted = status.Muted;
-                    OnPropertyChanged(nameof(VolumeValue));
-                    OnPropertyChanged(nameof(IsMuted));
-                    OnPropertyChanged(nameof(VolumeText));
+                    if (volChanged) OnPropertyChanged(nameof(VolumeValue));
+                    if (muteChanged) OnPropertyChanged(nameof(IsMuted));
+                    if (volChanged || muteChanged) OnPropertyChanged(nameof(VolumeText));
                 }
 
                 // 统一触发所有派生属性通知
                 OnPropertyChanged(nameof(Title));
                 OnPropertyChanged(nameof(Artist));
+                OnPropertyChanged(nameof(AlbumTitle));
                 OnPropertyChanged(nameof(IsPlaying));
                 OnPropertyChanged(nameof(HasPrevious));
                 OnPropertyChanged(nameof(HasNext));
@@ -411,6 +464,16 @@ public class MainViewModel : INotifyPropertyChanged
                 {
                     ThumbnailUrl = newThumb;
                 }
+
+                // 插件广播：投影为快照 → diff 出变化事件 → 广播给所有插件
+                var snapshot = PluginEventDispatcher.ToSnapshot(status);
+                PluginHost.UpdateSnapshot(snapshot);
+                var events = PluginEventDispatcher.Diff(_lastSnapshot, snapshot);
+                if (events.Count > 0)
+                {
+                    PluginHost.Publish(events);
+                }
+                _lastSnapshot = snapshot;
             }
             else
             {
@@ -436,6 +499,7 @@ public class MainViewModel : INotifyPropertyChanged
             StatusText = "服务器已断开";
             IsServerRunning = false;
             StopPolling();
+            PluginHost.PublishServerState(false);
         }
     }
 
@@ -449,8 +513,6 @@ public class MainViewModel : INotifyPropertyChanged
                 _smtcAvailable = health.Smtc?.Available ?? false;
                 _watcherAvailable = health.NeteaseWatcher?.Available ?? false;
                 _volumeAvailable = health.Volume?.Available ?? false;
-                _ncmLoggedIn = health.NcmApi?.LoggedIn ?? false;
-                _ncmNickname = health.NcmApi?.Nickname ?? "";
                 OnPropertyChanged(nameof(HealthText));
             }
         }
@@ -474,6 +536,34 @@ public class MainViewModel : INotifyPropertyChanged
         Logger.Info("停止轮询");
         _pollTimer?.Stop();
         _pollTimer?.Dispose();
+        _pluginJobTimer?.Stop();
+        _pluginJobTimer?.Dispose();
+    }
+
+    /// <summary>通知所有插件卸载并保存状态（应用退出时调用）。</summary>
+    public void ShutdownPlugins()
+    {
+        try
+        {
+            PluginHost.ShutdownAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"插件关闭异常: {ex.Message}");
+        }
+    }
+
+    /// <summary>ShutdownPlugins 的异步版本：供 UI 线程调用，避免同步等待造成卡死。</summary>
+    public async Task ShutdownPluginsAsync()
+    {
+        try
+        {
+            await PluginHost.ShutdownAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"插件关闭异常: {ex.Message}");
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

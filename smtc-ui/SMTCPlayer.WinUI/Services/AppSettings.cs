@@ -74,6 +74,46 @@ public static class AppSettings
         Save();
     }
 
+    /// <summary>更新专辑名显示并保存</summary>
+    public static void SetShowAlbum(bool enabled)
+    {
+        _current.ShowAlbum = enabled;
+        Save();
+    }
+
+    /// <summary>获取专辑名显示（默认关闭）</summary>
+    public static bool GetShowAlbum()
+    {
+        return _current.ShowAlbum;
+    }
+
+    /// <summary>
+    /// 获取关闭按钮行为：null=每次询问；"minimize"=最小化到托盘；"exit"=直接退出。
+    /// </summary>
+    public static string? GetCloseAction() => string.IsNullOrEmpty(_current.CloseAction) ? null : _current.CloseAction;
+
+    public static void SetCloseAction(string? action)
+    {
+        _current.CloseAction = action;
+        Save();
+    }
+
+    /// <summary>歌曲进度偏移上限（毫秒）</summary>
+    private const int MaxPositionOffsetMs = 5000;
+
+    /// <summary>获取歌曲进度偏移（毫秒，±5000）</summary>
+    public static int GetPositionOffsetMs()
+    {
+        return Math.Clamp(_current.PositionOffsetMs, -MaxPositionOffsetMs, MaxPositionOffsetMs);
+    }
+
+    /// <summary>更新歌曲进度偏移并保存（毫秒，±5000）</summary>
+    public static void SetPositionOffsetMs(int ms)
+    {
+        _current.PositionOffsetMs = Math.Clamp(ms, -MaxPositionOffsetMs, MaxPositionOffsetMs);
+        Save();
+    }
+
     /// <summary>获取主题</summary>
     public static ElementTheme GetTheme()
     {
@@ -97,4 +137,11 @@ public class SettingsData
 {
     public string Theme { get; set; } = "Default";
     public bool DebugMode { get; set; } = false;
+    public bool ShowAlbum { get; set; } = false;
+
+    /// <summary>关闭按钮行为：null=每次询问；"minimize"=最小化到托盘；"exit"=直接退出。</summary>
+    public string? CloseAction { get; set; } = null;
+
+    /// <summary>歌曲进度偏移（毫秒）：校准网易云监视器读取的播放进度，±5000。</summary>
+    public int PositionOffsetMs { get; set; } = 0;
 }

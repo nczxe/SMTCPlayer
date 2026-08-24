@@ -68,12 +68,16 @@ class NeteaseWatcherClient:
             return None
 
         music = data["music"]
+        # 监视器未锁定进度时 time 为 -1 哨兵：钳为 0，
+        # 避免负值经合并逻辑污染 UI 播放进度
+        time_val = data.get("time")
+        position = float(time_val) if isinstance(time_val, (int, float)) and time_val >= 0 else 0.0
         return {
             "title": music.get("name", ""),
             "artist": ", ".join(music.get("artists", [])) if music.get("artists") else "",
             "album_title": music.get("album", ""),
             "duration": music.get("duration", 0) / 1000.0 if music.get("duration") else 0,
-            "position": data.get("time", 0) if isinstance(data.get("time"), (int, float)) else 0,
+            "position": position,
             "song_id": music.get("id"),
             "thumbnail": music.get("thumbnail", ""),
             "aliases": music.get("aliases", []),

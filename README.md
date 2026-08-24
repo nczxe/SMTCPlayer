@@ -6,7 +6,7 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.1.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.1.1-blue.svg)]() [![Build](https://img.shields.io/badge/Build-26082323500S-blue.svg)]()
 
 **官网：[splay.asia](https://splay.asia)**
 
@@ -20,7 +20,7 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 | **WPF** | .NET 10 + WPF | Windows 10/11 兼容性好，经典桌面 UI |
 | **Python** | Python + Tkinter | 轻量级，跨 Python 版本运行 |
 
-三种版本共享同一个 Python 服务端和 netease-watcher，功能完全一致。
+三种版本共享同一个 Python 服务端，网易云增强功能由 NeteaseEnhance 插件托管。
 
 ---
 
@@ -33,7 +33,8 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 - 系统音量控制与静音切换
 
 ### 网易云音乐增强
-- 精确播放进度（通过 `netease-watcher` 原生进程注入获取，比系统 SMTC 更精准）
+- 精确播放进度（由网易云增强插件托管的原创 `NeteaseWatcher` 监视器获取，比系统 SMTC 更精准；自动扫描所有网易云子进程，主窗口关闭后依然可用）
+- 播放进度偏移校准（设置中手动微调 ±5 秒，修正进度显示偏差，仅 WinUI 版）
 - 高清专辑封面
 - 歌曲搜索、用户歌单浏览
 - 网页拉起播放（`MUSIC_U` Cookie，Windows DPAPI 加密存储）
@@ -54,6 +55,14 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 - 深色主题、玻璃拟态 UI、响应式布局
 - PIN 码认证 + Token 鉴权
 
+### 插件系统
+- 基于 .NET AssemblyLoadContext 的可收集插件加载
+- 插件契约接口：IPlugin、ISearchProvider、IPlaybackController
+- 事件广播机制：SongChanged、PlaybackStateChanged、VolumeChanged、ServerStateChanged
+- 插件隔离设置存储和日志系统
+- 支持热更新和动态加载/卸载
+- 内置插件：网易云增强、Spotify 支持
+
 ---
 
 ## 快速开始
@@ -64,8 +73,8 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 
 | 安装包 | 大小 | 说明 |
 |--------|------|------|
-| `SMTCPlayer_WinUI_Setup_v1.1.0.exe` | ~23 MB | WinUI 版（SelfContained，含 .NET 运行时） |
-| `SMTCPlayer_WPF_Setup_v1.1.0.exe` | ~51 MB | WPF 版（SelfContained，含 .NET 运行时） |
+| `SMTCPlayer_WinUI_Setup_v1.1.1.exe` | ~69 MB | WinUI 版（SelfContained，含 .NET 运行时） |
+| `SMTCPlayer_WPF_Setup_v1.1.1.exe` | ~74 MB | WPF 版（SelfContained，含 .NET 运行时） |
 
 ### 方式二：Python 版
 
@@ -167,25 +176,39 @@ python server\main.py --no-gui
 ```
 NCM-SMTCPlayer/
 ├── smtc-ui/                           # .NET UI 解决方案
-│   ├── SMTCPlayer.sln                 # 解决方案（3 个项目）
+│   ├── SMTCPlayer.sln                 # 解决方案（6 个项目）
+│   ├── SMTCPlayer.PluginApi/          # 插件契约程序集（零依赖）
+│   │   ├── IPlugin.cs                 #   插件主接口
+│   │   ├── IPluginContext.cs          #   插件上下文接口
+│   │   ├── ISearchProvider.cs         #   搜索提供者接口
+│   │   └── PluginEvent.cs             #   事件类型定义
 │   ├── SMTCPlayer.Core/               # 核心类库（共享）
 │   │   ├── Models/                    #   数据模型
 │   │   ├── Services/                  #   SmtcApiClient, FlaskServerManager, Logger
-│   │   └── ViewModels/               #   MainViewModel（MVVM）
+│   │   ├── ViewModels/               #   MainViewModel（MVVM）
+│   │   └── Plugins/                  #   插件宿主框架
+│   │       ├── PluginHost.cs          #     插件发现/加载/事件广播
+│   │       ├── PluginRegistry.cs      #     启用状态注册表
+│   │       └── PluginEventDispatcher.cs #   事件 diff 引擎
 │   ├── SMTCPlayer.WinUI/             # WinUI3 原生 UI
-│   │   ├── Dialogs/                   #   Settings, PinSetup 对话框
+│   │   ├── Dialogs/                   #   PinSetup、PositionOffset 校准对话框
 │   │   ├── Services/                  #   AppSettings 持久化
+│   │   ├── SettingsPanel.xaml         #   全窗口设置面板
 │   │   ├── MainWindow.xaml            #   主窗口（Mica + Acrylic）
 │   │   └── App.xaml                   #   应用入口
 │   └── SMTCPlayer.Wpf/              # WPF UI
 │       ├── Themes/                    #   深色/浅色主题
 │       ├── MainWindow.xaml            #   主窗口
 │       └── SettingsWindow.xaml        #   设置窗口
+├── plugins/                           # 插件源码（编译后部署到 smtc-ui\plugins\）
+│   ├── SMTCPlayer.Plugins.NeteaseEnhance/   # 网易云增强插件（托管 NeteaseWatcher）
+│   └── SMTCPlayer.Plugins.SpotifySupport/   # Spotify 支持插件
 ├── server/                            # Python 服务端
-│   ├── main.py                        # 入口：参数解析、watcher、Flask、GUI
+│   ├── main.py                        # 入口：参数解析、Flask、GUI
 │   ├── app.py                         # Flask API + 静态文件托管
 │   ├── smtc_controller.py             # Windows SMTC API 封装
-│   ├── netease_watcher.py             # netease-watcher HTTP 客户端
+│   ├── netease_watcher_client.py      # NeteaseWatcher HTTP 客户端
+│   ├── netease_watcher_server.py      # 原创网易云状态监视器（行为启发式内存扫描）
 │   ├── volume_controller.py           # 系统音量控制（pycaw）
 │   ├── ncm_music_api.py               # 网易云音乐 API（WEAPI 加密）
 │   ├── security.py                    # PIN / Token / DPAPI 加密
@@ -195,9 +218,6 @@ NCM-SMTCPlayer/
 │       ├── player.js                  #   播放器逻辑
 │       ├── auth.js                    #   认证流程
 │       └── style.css                  #   深色主题样式
-├── netease-watcher/                   # 网易云注入工具
-│   ├── netease-watcher.exe
-│   └── wndhok.dll
 ├── tests/
 │   └── test_security.py               # 安全模块单元测试
 ├── build.bat                          # 构建脚本（Python + .NET + 安装包）
@@ -222,20 +242,25 @@ NCM-SMTCPlayer/
 ┌─────────────────────────────────────────────────────────────┐
 │                 Flask Server (app.py)                        │
 │  ┌──────────────┐ ┌───────────────┐ ┌────────────────────┐  │
-│  │ security.py  │ │ ncm_music_    │ │ netease_watcher.py │  │
-│  │ PIN/Token    │ │ api.py        │ │ → localhost:3574   │  │
-│  │ DPAPI 加密    │ │ 网易云 API     │ └─────────┬──────────┘  │
-│  └──────────────┘ └───────────────┘           │              │
+│  │ security.py  │ │ ncm_music_    │ │ netease_watcher_   │  │
+│  │ PIN/Token    │ │ api.py        │ │ client.py          │  │
+│  │ DPAPI 加密    │ │ 网易云 API     │ │ → localhost:3574   │  │
+│  └──────────────┘ └───────────────┘ └─────────┬──────────┘  │
 │  ┌──────────────┐ ┌───────────────┐           │              │
 │  │ smtc_ctrl    │ │ volume_ctrl   │           │              │
 │  │ Windows SMTC │ │ pycaw 音量     │           │              │
 │  └──────────────┘ └───────────────┘           │              │
 └───────────────────────────────────────────────┼──────────────┘
                                                 │
-                     ┌──────────────────────────▼───────────┐
-                     │   netease-watcher.exe + wndhok.dll    │
-                     │   注入网易云进程，提取精准进度/封面      │
-                     └───────────────────────────────────────┘
+┌───────────────────────────────────────────────▼──────────────┐
+│                 .NET 插件宿主 (PluginHost)                    │
+│  ┌─────────────────────┐  ┌─────────────────────────────┐   │
+│  │  NeteaseEnhance     │  │  SpotifySupport             │   │
+│  │  网易云增强插件       │  │  Spotify 支持插件            │   │
+│  │  (搜索/播放/监视器)  │  │  (搜索/播放)                 │   │
+│  └─────────────────────┘  └─────────────────────────────┘   │
+│  事件广播: SongChanged / PlaybackStateChanged / VolumeChanged│
+└──────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │              桌面 UI（三选一）                               │
@@ -299,9 +324,10 @@ python -m pytest tests -v
 |------|------|
 | WinUI | .NET 10, Windows App SDK 1.8, H.NotifyIcon.WinUI, QRCoder |
 | WPF | .NET 10, WPF, QRCoder |
-| Python 服务端 | Flask, pycaw, qrcode, pystray, Pillow |
-| 安全 | PBKDF2-SHA256, Windows DPAPI, HMAC |
-| 构建工具 | PyInstaller, dotnet CLI, Inno Setup 6 |
+| Python 服务端 | Flask, pycaw, qrcode, pystray, Pillow, pycryptodome, numpy, winrt-*, requests |
+| 插件系统 | .NET AssemblyLoadContext (可收集), 自定义 PluginApi 契约 |
+| 安全 | PBKDF2-SHA256 (200,000 次迭代), Windows DPAPI, HMAC 恒定时间比较 |
+| 构建工具 | PyInstaller, dotnet CLI, Inno Setup 6/7 |
 
 ---
 
@@ -318,4 +344,3 @@ python -m pytest tests -v
 - [NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi) — 网易云音乐 API 参考
 - [QRCoder](https://github.com/codebude/QRCoder) — QR 码生成
 - [H.NotifyIcon](https://github.com/HavenDV/H.NotifyIcon) — WinUI 托盘图标
-- [netease-watcher](https://github.com/YUCLing/netease-watcher) — 网易云音乐进程注入工具（精准进度与封面获取）

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -16,6 +16,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SMTCPlayer.Core\SMTCPlayer.Core.csproj" />
+    <!-- 仅保证构建顺序：先编译插件项目并部署到 ..\plugins\（分发目录），再由下方 Content 复制进输出目录 -->
+    <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.NeteaseEnhance\SMTCPlayer.Plugins.NeteaseEnhance.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.SpotifySupport\SMTCPlayer.Plugins.SpotifySupport.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,10 +29,39 @@
     <Content Include="..\..\server\**\*"
              Exclude="..\..\server\config.json;..\..\server\**\__pycache__\**;..\..\server\**\*.pyc"
              CopyToOutputDirectory="PreserveNewest" Link="server\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Content Include="..\..\netease-watcher\**\*"
-             Exclude="..\..\netease-watcher\**\*.pdb"
-             CopyToOutputDirectory="PreserveNewest" Link="netease-watcher\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- 插件分发目录 → 输出目录 plugins\（PluginHost 启动时扫描 BaseDirectory\plugins） -->
+    <Content Include="..\plugins\**\*"
+             CopyToOutputDirectory="PreserveNewest" Link="plugins\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- 内置无头 Python 服务端（PyInstaller 产物，build.bat 先行构建；缺失时回落系统 Python） -->
+    <Content Include="..\..\dist\frozen-server\SMTCPlayerServer\SMTCPlayerServer.exe"
+             Condition="Exists('..\..\dist\frozen-server\SMTCPlayerServer\SMTCPlayerServer.exe')"
+             CopyToOutputDirectory="PreserveNewest" Link="server\SMTCPlayerServer.exe" />
+    <Content Include="..\..\dist\frozen-server\SMTCPlayerServer\_internal\**\*"
+             CopyToOutputDirectory="PreserveNewest" Link="server\_internal\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <!-- 发布期兜底：把内置服务端拷进 publish\server\（Content 通配符在解析期求值，
+       全新环境首次构建可能晚于 PyInstaller 产物生成） -->
+  <Target Name="CopyFrozenServer" AfterTargets="Publish">
+    <ItemGroup>
+      <_FrozenFiles Include="..\..\dist\frozen-server\SMTCPlayerServer\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FrozenFiles)"
+          DestinationFiles="@(_FrozenFiles->'$(PublishDir)server\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="@(_FrozenFiles) != ''" />
+  </Target>
+
+  <!-- 兜底：Content 通配符在项目解析期求值，全新克隆的首次构建可能晚于插件部署；
+       此 Target 在执行期拷贝，顺序由上面的 ReferenceOutputAssembly=false 引用保证 -->
+  <Target Name="CopyPluginDir" AfterTargets="Build">
+    <ItemGroup>
+      <PluginDistFiles Include="..\plugins\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginDistFiles)"
+          DestinationFiles="@(PluginDistFiles->'$(OutDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <None Update="Properties\Settings.settings">

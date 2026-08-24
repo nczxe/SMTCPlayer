@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smtc-player-v4';
+const CACHE_NAME = 'smtc-player-v10';
 const urlsToCache = ['/', '/api.js', '/auth.js', '/player.js', '/style.css'];
 
 self.addEventListener('install', (event) => {
@@ -25,6 +25,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
+    const url = new URL(event.request.url);
+    // 动态接口不缓存（/api/cover 除外：URL 带版本号，天然可缓存）
+    if (url.pathname.startsWith('/api/') && url.pathname !== '/api/cover') return;
     event.respondWith(
         caches.match(event.request).then((response) => {
             if (response) {

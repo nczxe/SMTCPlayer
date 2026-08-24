@@ -66,6 +66,8 @@ public partial class MainWindow : Window
 
             Logger.Info("MainWindow 正在关闭");
             _vm.StopPolling();
+            try { _vm.ShutdownPlugins(); }
+            catch (Exception ex) { Logger.Warn($"插件关闭异常: {ex.Message}"); }
             _server?.Stop();
             _notifyIcon?.Dispose();
         };
@@ -324,9 +326,12 @@ public partial class MainWindow : Window
         System.Windows.Controls.Grid.SetRow(title, 1);
         grid.Children.Add(title);
 
+        // 版本号读程序集，与 csproj <Version> 单一来源
+        var asmVersion = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
+        var versionText = asmVersion != null ? $"v{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}" : "v0.0.0";
         var version = new System.Windows.Controls.TextBlock
         {
-            Text = "v1.1.0 - FR-NEXT",
+            Text = $"{versionText} - FR-NEXT",
             FontSize = 11,
             Foreground = FindResource("TextMutedBrush") as System.Windows.Media.Brush,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,

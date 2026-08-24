@@ -167,6 +167,13 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                    HorizontalAlignment="Center"
                                    TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="AlbumTextPortrait"
+                                   Text="{x:Bind Vm.AlbumTitle, Mode=OneWay, FallbackValue=''}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="Collapsed" />
                     </StackPanel>
 
                     <!-- 进度条 + 时间 -->
@@ -323,6 +330,12 @@
                                    Style="{StaticResource BodyTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                    TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="AlbumTextLandscape"
+                                   Text="{x:Bind Vm.AlbumTitle, Mode=OneWay, FallbackValue=''}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="Collapsed" />
                     </StackPanel>
 
                     <StackPanel Spacing="6">
@@ -495,5 +508,10 @@
                 </Button>
             </Grid>
         </Border>
+
+        <!-- 全窗口设置面板（覆盖层，仿原生设置应用布局） -->
+        <local:SettingsPanel x:Name="SettingsOverlay"
+                             Grid.RowSpan="3"
+                             Visibility="Collapsed" />
     </Grid>
 </Window>

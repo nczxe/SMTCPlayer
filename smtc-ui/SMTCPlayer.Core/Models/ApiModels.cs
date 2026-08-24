@@ -67,9 +67,6 @@ public class HealthStatus
     [JsonPropertyName("volume")]
     public VolumeInfo? Volume { get; set; }
 
-    [JsonPropertyName("ncm_api")]
-    public NcmApiInfo? NcmApi { get; set; }
-
     [JsonPropertyName("config")]
     public ConfigInfo? Config { get; set; }
 }
@@ -96,18 +93,6 @@ public class VolumeInfo
 {
     [JsonPropertyName("available")]
     public bool Available { get; set; }
-}
-
-public class NcmApiInfo
-{
-    [JsonPropertyName("available")]
-    public bool Available { get; set; }
-
-    [JsonPropertyName("logged_in")]
-    public bool LoggedIn { get; set; }
-
-    [JsonPropertyName("nickname")]
-    public string? Nickname { get; set; }
 }
 
 public class ConfigInfo

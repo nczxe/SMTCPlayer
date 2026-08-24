@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 示例插件：只允许引用 PluginApi，禁止引用 Core / UI 框架 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\smtc-ui\SMTCPlayer.PluginApi\SMTCPlayer.PluginApi.csproj" />
+  </ItemGroup>
+
+  <!-- 编译后部署到插件分发目录 smtc-ui\plugins\，
+       由 WinUI / WPF 项目以 Content 复制到各自输出目录的 plugins\ 下随程序加载与发布 -->
+  <Target Name="DeployPlugin" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginDeployDir>$(MSBuildThisFileDirectory)..\..\smtc-ui\plugins\spotify-support\</PluginDeployDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(PluginDeployDir)" />
+    <ItemGroup>
+      <PluginBinaries Include="$(OutDir)*.dll" Exclude="$(OutDir)SMTCPlayer.PluginApi.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginBinaries)" DestinationFolder="$(PluginDeployDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)plugin.json" DestinationFolder="$(PluginDeployDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -2,13 +2,15 @@ import os
 import sys
 import socket
 import json
+import time
+import uuid
 import argparse
 import struct
 import zlib
 import logging
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from smtc_controller import SMTCController
-from netease_watcher import NeteaseWatcherClient
+from netease_watcher_client import NeteaseWatcherClient
 from volume_controller import VolumeController
 from security import PinAuth, validate_pin, load_config
 
@@ -41,11 +43,131 @@ PUBLIC_API_PATHS = {
     "/api/auth/login",
     "/api/auth/change_pin",
     "/api/auth/reset_pin",
+    # 能力探测只暴露功能开关，不含敏感数据；网页端登录前也需要它决定布局
+    "/api/capabilities",
+    # 专辑封面本身不含敏感信息，且 <img>/background 无法携带 token 头
+    "/api/cover",
 }
+
+# 宿主（桌面端）通过轮询请求头 X-SMTC-Capabilities 上报的插件聚合能力。
+# 宿主每秒轮询 /api/status，该值随之刷新；"none" 表示宿主已确认无任何能力插件。
+_host_capabilities = set()
+
+# 宿主上报的搜索提供者列表（[{id, name}]，来自实现 ISearchProvider 的插件）。
+_host_providers = []
+
+# ============== 插件任务桥（网页端 → 宿主 → 插件） ==============
+# 网页端把搜索/播放请求写入队列并长轮询结果；宿主 400ms 取件、
+# 调用对应插件实现后回传结果并唤醒等待者。
+import threading
+import uuid
+
+_plugin_jobs = {}
+_plugin_jobs_lock = threading.Lock()
+_PLUGIN_JOB_TTL = 300  # 超过 5 分钟的任务视为废弃
+
+
+def _purge_old_jobs():
+    now = time.time()
+    stale = [jid for jid, j in _plugin_jobs.items() if now - j["created"] > _PLUGIN_JOB_TTL]
+    for jid in stale:
+        _plugin_jobs.pop(jid, None)
+
+
+@app.route("/api/plugin/request", methods=["POST"])
+def api_plugin_request():
+    """网页端发起插件调用（search/play），返回 job_id 供结果长轮询。"""
+    data = request.get_json(silent=True) or {}
+    provider = (data.get("provider") or "").strip()
+    action = data.get("action")
+    if not provider or action not in ("search", "play"):
+        return jsonify({"success": False, "error": "BAD_REQUEST"}), 400
+    job = {
+        "id": uuid.uuid4().hex,
+        "provider": provider,
+        "action": action,
+        "query": (data.get("query") or "").strip(),
+        "item": data.get("item"),
+        "created": time.time(),
+        "taken": False,
+        "event": threading.Event(),
+        "result": None,
+    }
+    with _plugin_jobs_lock:
+        _purge_old_jobs()
+        _plugin_jobs[job["id"]] = job
+    return jsonify({"success": True, "job_id": job["id"]})
+
+
+@app.route("/api/plugin/result/<job_id>")
+def api_plugin_result_wait(job_id):
+    """网页端长轮询任务结果（默认最多等 12 秒）。"""
+    try:
+        wait = min(float(request.args.get("wait", 12)), 15)
+    except ValueError:
+        wait = 12
+    job = _plugin_jobs.get(job_id)
+    if job is None:
+        return jsonify({"status": "not_found"}), 404
+    done = job["event"].wait(wait)
+    if not done:
+        return jsonify({"status": "timeout"})
+    result = job["result"] or {}
+    return jsonify({"status": "done", **result})
+
+
+@app.route("/api/plugin/jobs/next")
+def api_plugin_jobs_next():
+    """宿主取件：返回待处理任务（本机访问免认证，远程需 token）。"""
+    with _plugin_jobs_lock:
+        _purge_old_jobs()
+        pending = [j for j in _plugin_jobs.values() if not j["taken"] and not j["event"].is_set()]
+        picked = pending[:5]
+        for j in picked:
+            j["taken"] = True
+    return jsonify([
+        {"id": j["id"], "provider": j["provider"], "action": j["action"],
+         "query": j["query"], "item": j["item"]}
+        for j in picked
+    ])
+
+
+@app.route("/api/plugin/jobs/<job_id>/result", methods=["POST"])
+def api_plugin_job_result(job_id):
+    """宿主回传任务结果，唤醒等待中的网页端。"""
+    body = request.get_json(silent=True) or {}
+    job = _plugin_jobs.get(job_id)
+    if job is None:
+        return jsonify({"success": False, "error": "JOB_NOT_FOUND"}), 404
+    job["result"] = body
+    job["event"].set()
+    return jsonify({"success": True})
+
+
+@app.route("/api/plugin/providers", methods=["POST"])
+def api_plugin_providers():
+    """宿主上报当前搜索提供者列表。"""
+    global _host_providers
+    data = request.get_json(silent=True) or {}
+    providers = data.get("providers")
+    if isinstance(providers, list):
+        _host_providers = [
+            {"id": str(p.get("id", "")), "name": str(p.get("name", ""))}
+            for p in providers if p.get("id")
+        ]
+    return jsonify({"success": True})
 
 
 @app.before_request
 def require_pin_auth():
+    # 捕获宿主上报的插件能力（任何请求都可能携带）
+    caps_header = request.headers.get("X-SMTC-Capabilities")
+    if caps_header is not None:
+        global _host_capabilities
+        _host_capabilities = {
+            c.strip().lower() for c in caps_header.split(",") if c.strip() and c.strip().lower() != "none"
+        }
+
     if request.path in PUBLIC_API_PATHS:
         return None
     if not request.path.startswith("/api/"):
@@ -79,10 +201,12 @@ def is_netease_cloud_music():
 
 def get_merged_status():
     status = smtc.get_status().copy()
-    status["source"] = smtc.get_session_source()
+    source = status.get("source", "")
+    status["source"] = source
+    status["source_name"] = smtc.get_friendly_name(source)
     status["netease_watcher_active"] = False
 
-    if is_netease_cloud_music():
+    if source and IS_NETEASE_CLOUD_MUSIC in source:
         ncm_status = netease_watcher.get_status()
         if ncm_status:
             if ncm_status["duration"] > 0:
@@ -100,6 +224,18 @@ def get_merged_status():
             if ncm_status.get("song_id"):
                 status["song_id"] = ncm_status["song_id"]
             status["netease_watcher_active"] = True
+
+    # 网易云 watcher 未提供封面时（如 Spotify），回落到 SMTC 封面
+    # 以带版本号的封面端点 URL 提供：内容不变时 URL 不变，浏览器/宿主可缓存
+    if not status.get("thumbnail"):
+        cover = smtc.get_active_cover()
+        if cover:
+            _mime, _data, ver = cover
+            try:
+                base = request.host_url.rstrip("/")
+            except RuntimeError:
+                base = ""
+            status["thumbnail"] = f"{base}/api/cover?v={ver}"
 
     master_vol = volume_ctrl.get_master_volume()
     status["volume"] = master_vol.get("volume", 0)
@@ -276,13 +412,23 @@ def api_auth_login():
     return jsonify({"success": True, "token": token})
 
 
+@app.route("/api/capabilities")
+def api_capabilities():
+    """宿主插件能力与搜索提供者探测（网页端据此显隐功能区、渲染来源下拉框）。"""
+    return jsonify({
+        "capabilities": sorted(_host_capabilities),
+        "providers": _host_providers,
+    })
+
+
 @app.route("/api/health")
 def api_health():
     ncm = get_ncm_api()
     cfg = load_config()
     return jsonify({
         "ok": True,
-        "version": "1.1.0",
+        "version": "1.1.1",
+        "build": "26082323500S",
         "auth_configured": pin_auth.is_configured(),
         "port": resolve_port(),
         "smtc": {
@@ -311,6 +457,36 @@ def api_health():
 def get_status():
     status = get_merged_status()
     return jsonify(status)
+
+
+@app.route("/api/sessions", methods=["GET"])
+def api_sessions():
+    """所有 SMTC 会话列表（网页端来源切换用）。"""
+    return jsonify({
+        "sessions": smtc.get_sessions_info(),
+        "active": smtc.get_active_source(),
+        "preferred": smtc.get_preferred_source(),
+    })
+
+
+@app.route("/api/sessions/active", methods=["POST"])
+def api_set_active_session():
+    """切换激活会话；source 为空恢复自动（第一个会话）。"""
+    data = request.get_json(silent=True) or {}
+    smtc.set_preferred_source((data.get("source") or "").strip())
+    return jsonify({"success": True, "active": smtc.get_active_source()})
+
+
+@app.route("/api/cover", methods=["GET"])
+def api_cover():
+    """当前会话的 SMTC 专辑封面（网易云 watcher 提供封面时不走此处）。"""
+    cover = smtc.get_active_cover()
+    if not cover:
+        return jsonify({"success": False, "error": "NO_COVER"}), 404
+    mime, data, _ver = cover
+    resp = Response(data, mimetype=mime)
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @app.route("/api/play_pause", methods=["POST"])
@@ -629,11 +805,9 @@ def resolve_port(cli_port=None):
 
 
 if __name__ == "__main__":
-    import atexit
-    import subprocess as _sp
     import signal as _sig
 
-    parser = argparse.ArgumentParser(description="SMTC Player v1.1.0")
+    parser = argparse.ArgumentParser(description="SMTC Player 后端服务 v1.1.1")
     parser.add_argument("--port", type=int, default=None, help="HTTP 服务端口 (默认: 8888)")
     parser.add_argument("--save-port", action="store_true", help="将 --port 参数保存到 config.json")
     args = parser.parse_args()
@@ -651,46 +825,9 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[Config] 保存配置失败: {e}")
 
-    _watcher_proc = None
+    # 状态监视器（NeteaseWatcher）由 NeteaseEnhance 插件托管生命周期，此处仅被动消费 :3574
 
-    def _start_watcher():
-        global _watcher_proc
-        app_dir = get_app_dir()
-        watcher_exe = os.path.join(app_dir, "netease-watcher", "netease-watcher.exe")
-        if not os.path.exists(watcher_exe):
-            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            watcher_exe = os.path.join(script_dir, "netease-watcher", "netease-watcher.exe")
-        if os.path.exists(watcher_exe):
-            try:
-                _watcher_proc = _sp.Popen(
-                    [watcher_exe],
-                    stdout=_sp.DEVNULL,
-                    stderr=_sp.DEVNULL,
-                    creationflags=_sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-                )
-                print(f"[Watcher] netease-watcher 已启动 (PID: {_watcher_proc.pid})")
-            except Exception as e:
-                print(f"[Watcher] 启动失败: {e}")
-        else:
-            print(f"[Watcher] 未找到 netease-watcher.exe，跳过")
-
-    def _stop_watcher():
-        global _watcher_proc
-        if _watcher_proc and _watcher_proc.poll() is None:
-            try:
-                _watcher_proc.terminate()
-                _watcher_proc.wait(timeout=3)
-                print("[Watcher] netease-watcher 已停止")
-            except Exception:
-                try:
-                    _watcher_proc.kill()
-                except Exception:
-                    pass
-
-    atexit.register(_stop_watcher)
-    _start_watcher()
-
-    # 等待 watcher 就绪后刷新可用性（最多重试 5 次，每次 1 秒）
+    # 服务就绪后刷新监视器可用性（最多重试 5 次，每次 1 秒）
     import time as _time
     for _ in range(5):
         _time.sleep(1)
@@ -702,15 +839,15 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
 
     print("=" * 60)
-    print("  SMTC Player v1.1.0 - 媒体控制器服务端")
+    print("  SMTC Player v1.1.1 (build 26082323500S) - 媒体控制器服务端")
     print("=" * 60)
     print(f"  本地访问: http://127.0.0.1:{port}")
     print(f"  局域网访问: http://{local_ip}:{port}")
     print(f"  SMTC可用: {'是' if smtc.available else '否 (模拟模式)'}")
     if netease_watcher.available:
-        print(f"  网易云增强: 已启用 (netease-watcher)")
+        print(f"  网易云增强: 已启用 (NeteaseWatcher)")
     else:
-        print(f"  网易云增强: 未检测到 (可选)")
+        print(f"  网易云增强: 未检测到 (可选，由网易云增强插件托管)")
     print(f"  音量控制: {'是' if volume_ctrl.available else '否'}")
 
     ncm = get_ncm_api()
@@ -726,7 +863,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("  提示: 确保手机/设备与电脑在同一局域网")
     if netease_watcher.available:
-        print("  netease-watcher 已就绪，提供精确进度和封面")
+        print("  NeteaseWatcher 已就绪，提供精确进度和封面")
     if ncm is None:
         print("  搜索和歌单: 需安装 pycryptodome (pip install pycryptodome)")
     print("=" * 60)

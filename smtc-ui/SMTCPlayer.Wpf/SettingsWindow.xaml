@@ -92,17 +92,6 @@
                 </Border>
 
                 <Border Style="{DynamicResource CardBorder}" Padding="16" Margin="0,0,0,12">
-                    <StackPanel>
-                        <TextBlock Text="网易云音乐 Cookie" FontSize="13" FontWeight="Medium"
-                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
-                        <TextBlock Text="清除已保存的登录凭据" FontSize="10" Margin="0,2,0,12"
-                                   Foreground="{DynamicResource TextMutedBrush}"/>
-                        <Button x:Name="ClearCookiesButton" Content="清除 Cookie" Style="{DynamicResource SecondaryButton}" FontSize="11"
-                                Padding="16,8" Click="ClearCookies_Click" HorizontalAlignment="Left"/>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{DynamicResource CardBorder}" Padding="16" Margin="0,0,0,12">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>

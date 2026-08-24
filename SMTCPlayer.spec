@@ -3,20 +3,17 @@ import sys
 from pathlib import Path
 
 server_dir = Path("server")
-watcher_dir = Path("netease-watcher")
 
 a = Analysis(
     [str(server_dir / "main.py")],
     pathex=[str(server_dir)],
     binaries=[],
     datas=[
-        (str(watcher_dir / "netease-watcher.exe"), "netease-watcher"),
-        (str(watcher_dir / "wndhok.dll"), "netease-watcher"),
         (str(server_dir / "static"), "static"),
     ],
     hiddenimports=[
         "smtc_controller",
-        "netease_watcher",
+        "netease_watcher_client",
         "volume_controller",
         "ncm_music_api",
         "security",

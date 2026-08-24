@@ -35,7 +35,7 @@ echo.
 
 echo [4/6] Building Python server (onedir)...
 echo.
-pyinstaller --clean --noconfirm SMTCPlayer.spec
+python -m PyInstaller --clean --noconfirm SMTCPlayer.spec
 if errorlevel 1 (
     echo.
     echo [Error] Python build failed!
@@ -45,19 +45,37 @@ if errorlevel 1 (
 echo [OK] Python package built to dist\SMTCPlayer\
 echo.
 
+echo [Info] Building embedded headless server (for installers)...
+python -m PyInstaller --clean --noconfirm --distpath dist\frozen-server --workpath build\frozen-server SMTCPlayerServer.spec
+if errorlevel 1 (
+    echo [Warn] Embedded server build failed; installers will fall back to system Python
+) else (
+    echo [OK] Embedded server built to dist\frozen-server\SMTCPlayerServer\
+)
+echo.
+
+echo [Info] Building standalone watcher (carried by NeteaseEnhance plugin)...
+python -m PyInstaller --clean --noconfirm --distpath dist\frozen-watcher --workpath build\frozen-watcher NeteaseWatcher.spec
+if errorlevel 1 (
+    echo [Warn] Watcher build failed; plugin will fall back to python script
+) else (
+    echo [OK] Watcher built to dist\frozen-watcher\NeteaseWatcher\
+)
+echo.
+
 echo [5/6] Building .NET UI (WPF + WinUI)...
 where dotnet >nul 2>&1
 if errorlevel 1 (
     echo [Warn] dotnet CLI not found, skipping .NET UI build
     goto :skip_dotnet
 )
-echo [Info] Building WinUI (SelfContained)...
-dotnet build smtc-ui\SMTCPlayer.WinUI\SMTCPlayer.WinUI.csproj -c Release --nologo
+echo [Info] Publishing WinUI (SelfContained)...
+dotnet publish smtc-ui\SMTCPlayer.WinUI\SMTCPlayer.WinUI.csproj -c Release --self-contained --nologo
 if errorlevel 1 (
-    echo [Warn] WinUI build failed
+    echo [Warn] WinUI publish failed
     goto :skip_dotnet
 )
-echo [OK] WinUI UI built to smtc-ui\SMTCPlayer.WinUI\bin\x64\Release\
+echo [OK] WinUI UI published to smtc-ui\SMTCPlayer.WinUI\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 echo [Info] Publishing WPF (SelfContained)...
 dotnet publish smtc-ui\SMTCPlayer.Wpf\SMTCPlayer.Wpf.csproj -c Release -r win-x64 --self-contained --nologo
 if errorlevel 1 (
@@ -70,23 +88,43 @@ echo.
 
 echo [6/6] Looking for Inno Setup compiler...
 set "ISCC="
-if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+if exist "D:\Inno Setup 7\ISCC.exe" (
+    set "ISCC=D:\Inno Setup 7\ISCC.exe"
+)
+if exist "C:\Program Files (x86)\Inno Setup 7\ISCC.exe" (
+    set "ISCC=C:\Program Files (x86)\Inno Setup 7\ISCC.exe"
+)
+if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
+    set "ISCC=C:\Program Files\Inno Setup 7\ISCC.exe"
+)
+if not defined ISCC if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
     set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 )
-if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
+if not defined ISCC if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
     set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+
+echo [Info] Reading app version from smtc-ui\Directory.Build.props ...
+set "APP_VERSION="
+for /f "usebackq tokens=3 delims=<>" %%a in (`findstr /c:"<Version>" "%~dp0smtc-ui\Directory.Build.props"`) do set "APP_VERSION=%%a"
+set "VER_ARG="
+if defined APP_VERSION (
+    echo [OK] App version: %APP_VERSION%
+    set "VER_ARG=/DMyAppVersion=%APP_VERSION%"
+) else (
+    echo [Warn] Failed to read version, installers fall back to iss default
 )
 
 if defined ISCC (
     echo [Info] Building WPF installer...
-    "%ISCC%" setup.iss
+    "%ISCC%" %VER_ARG% setup.iss
     if not errorlevel 1 (
         echo [OK] WPF installer built to dist\SMTCPlayer_WPF_Setup_v*.exe
     ) else (
         echo [Warn] WPF installer build failed
     )
     echo [Info] Building WinUI installer...
-    "%ISCC%" setup-winui.iss
+    "%ISCC%" %VER_ARG% setup-winui.iss
     if not errorlevel 1 (
         echo [OK] WinUI installer built to dist\SMTCPlayer_WinUI_Setup_v*.exe
     ) else (

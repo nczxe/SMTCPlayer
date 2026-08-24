@@ -16,6 +16,12 @@ public class FlaskServerManager : IDisposable
     public bool IsRunning => _flaskProcess != null && !_flaskProcess.HasExited;
     public string LastError { get; private set; } = "";
 
+    /// <summary>
+    /// 随包分发的冻结服务端（PyInstaller 产物，位于 server\SMTCPlayerServer.exe）。
+    /// 存在时优先使用，最终用户机器无需安装 Python；缺失时回落 python + app.py（开发模式）。
+    /// </summary>
+    public string? FrozenServerExe { get; }
+
     private static bool IsFlaskNoise(string line)
     {
         if (line.Contains(" HTTP/1.1\" ") && line.Contains(" - - ["))
@@ -33,12 +39,24 @@ public class FlaskServerManager : IDisposable
     {
         _pythonPath = pythonPath;
         _serverDir = serverDir;
-        Logger.Info($"FlaskServerManager 创建: python={pythonPath}, server={serverDir}");
+
+        var frozen = Path.Combine(serverDir, "SMTCPlayerServer.exe");
+        FrozenServerExe = File.Exists(frozen) ? frozen : null;
+
+        Logger.Info($"FlaskServerManager 创建: python={pythonPath}, server={serverDir}" +
+                    (FrozenServerExe != null ? "，内置服务端=已启用" : "，内置服务端=无（使用系统 Python）"));
     }
 
     public string ValidatePaths()
     {
         Logger.Info("开始路径验证...");
+
+        // 内置冻结服务端模式：无需系统 Python，也无需 app.py 源码
+        if (!string.IsNullOrEmpty(FrozenServerExe))
+        {
+            Logger.Info($"检测到内置冻结服务端: {FrozenServerExe}");
+            return "";
+        }
 
         if (string.IsNullOrWhiteSpace(_pythonPath) || _pythonPath == "python")
         {
@@ -114,16 +132,19 @@ public class FlaskServerManager : IDisposable
         _stderrBuffer.Clear();
         LastError = "";
 
-        var appPy = Path.Combine(_serverDir, "app.py");
-        Logger.Info($"启动 Flask: {_pythonPath} \"{appPy}\" --port {port}");
+        var frozen = !string.IsNullOrEmpty(FrozenServerExe);
+        var fileName = frozen ? FrozenServerExe! : _pythonPath;
+        var args = frozen ? $"--port {port} --no-gui" : $"\"{Path.Combine(_serverDir, "app.py")}\" --port {port}";
+
+        Logger.Info($"启动 Flask: {fileName} {args}");
         Logger.Info($"工作目录: {_serverDir}");
 
         _flaskProcess = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = _pythonPath,
-                Arguments = $"\"{appPy}\" --port {port}",
+                FileName = fileName,
+                Arguments = args,
                 WorkingDirectory = _serverDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -179,6 +200,8 @@ public class FlaskServerManager : IDisposable
         {
             _flaskProcess.Start();
             Logger.Info($"Flask 进程已启动, PID: {_flaskProcess.Id}");
+            // 兜底：主进程无论何种方式退出，OS 都会随之终结服务端子进程
+            ChildProcessJob.Assign(_flaskProcess);
         }
         catch (Exception ex)
         {

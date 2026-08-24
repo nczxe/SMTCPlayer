@@ -1,10 +1,13 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 using H.NotifyIcon;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -29,6 +32,9 @@ public sealed partial class MainWindow : Window
     private DispatcherQueue _dispatcher = null!;
     private H.NotifyIcon.TaskbarIcon? _trayIcon;
     private bool _authenticating;
+    private bool _forceExit;        // 托盘退出/确认退出后置位，放行真正的窗口关闭
+    private bool _cleanupDone;      // 退出清理只执行一次
+    private bool _closeDialogShowing;
 
     public MainViewModel Vm => _vm;
 
@@ -50,9 +56,12 @@ public sealed partial class MainWindow : Window
         TryEnableMicaBackdrop();
         InitializeViewModel();
         SetupTrayIcon();
+        UpdateAlbumVisibility();
 
         this.SizeChanged += OnSizeChanged;
         this.Closed += OnClosed;
+        // 拦截标题栏关闭按钮：询问退出/最小化到托盘（AppWindow.Closing 可取消）
+        this.AppWindow.Closing += OnAppWindowClosing;
     }
 
     // ============== Mica 背景 ==============
@@ -69,6 +78,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ============== 专辑名显示（设置开关控制） ==============
+
+    private void UpdateAlbumVisibility()
+    {
+        var visibility = AppSettings.GetShowAlbum() ? Visibility.Visible : Visibility.Collapsed;
+        AlbumTextPortrait.Visibility = visibility;
+        AlbumTextLandscape.Visibility = visibility;
+    }
+
     // ============== ViewModel 初始化 ==============
 
     private void InitializeViewModel()
@@ -81,6 +99,19 @@ public sealed partial class MainWindow : Window
         _server = new FlaskServerManager(pythonPath, serverDir);
         _vm = new MainViewModel(apiClient, _server, port, new WinUIClipboardService());
         _vm.PropertyChanged += OnViewModelChanged;
+        _vm.UpdateAvailable += OnUpdateAvailable;
+        _vm.PositionOffsetSeconds = AppSettings.GetPositionOffsetMs() / 1000.0;
+
+        // 全窗口设置面板事件
+        SettingsOverlay.StateChanged += () =>
+        {
+            RootGrid.RequestedTheme = SettingsOverlay.SelectedTheme;
+            UpdateAlbumVisibility();
+        };
+        SettingsOverlay.CloseRequested += () => SettingsOverlay.Visibility = Visibility.Collapsed;
+        SettingsOverlay.PinRequested += () => _ = HandleSettingsPinRequestAsync();
+        SettingsOverlay.AboutRequested += () => _ = ShowAboutDialogAsync();
+        SettingsOverlay.PositionOffsetRequested += () => _ = ShowPositionOffsetDialogAsync();
 
         UpdateQrCode($"http://{FlaskServerManager.GetLocalIp()}:{_vm.Port}");
         UpdateVolumeIcon();
@@ -263,6 +294,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private string? _lastVolumeGlyph;
+
     private void UpdateVolumeIcon()
     {
         // U+E74F Mute, U+E992 VolumeLow, U+E767 Volume
@@ -273,6 +306,9 @@ public sealed partial class MainWindow : Window
             glyph = "\uE992";
         else
             glyph = "\uE767";
+
+        if (glyph == _lastVolumeGlyph) return; // 状态未变：跳过重复更新与日志
+        _lastVolumeGlyph = glyph;
 
         Logger.Debug($"UpdateVolumeIcon: IsMuted={_vm.IsMuted}, Volume={_vm.VolumeValue}, glyph={glyph}");
         VolumeIconPortrait.Glyph = glyph;
@@ -366,54 +402,52 @@ public sealed partial class MainWindow : Window
 
     // ============== 设置按钮 ==============
 
-    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
+    private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(RootGrid.RequestedTheme, AppSettings.GetDebugMode());
-        dialog.XamlRoot = ContentRoot.XamlRoot;
+        SettingsOverlay.LoadState(RootGrid.RequestedTheme, _vm.PluginHost);
+        SettingsOverlay.Visibility = Visibility.Visible;
+    }
 
-        bool keepOpen = true;
-        while (keepOpen)
+    /// <summary>设置面板请求修改 PIN（原 ContentDialog 循环逻辑的等价迁移）。</summary>
+    private async Task HandleSettingsPinRequestAsync()
+    {
+        if (!_vm.IsServerRunning)
         {
-            var result = await dialog.ShowAsync();
-            Logger.Info($"SettingsDialog: result={result}, WantsChangePin={dialog.WantsChangePin}, WantsClearCookies={dialog.WantsClearCookies}, WantsAbout={dialog.WantsAbout}");
+            await ShowInfoAsync("请先启动服务，再修改访问 PIN。");
+            return;
+        }
+        await OpenPinSetupDialogAsync(resetMode: false);
+    }
 
-            // 应用主题（已由 SettingsDialog 持久化保存）
-            RootGrid.RequestedTheme = dialog.SelectedTheme;
+    // ============== 播放进度校准 ==============
 
-            if (dialog.WantsChangePin)
-            {
-                dialog.WantsChangePin = false;
-                if (!_vm.IsServerRunning)
-                {
-                    await ShowInfoAsync("请先启动服务，再修改访问 PIN。");
-                }
-                else
-                {
-                    await OpenPinSetupDialogAsync(resetMode: false);
-                }
-            }
-            else if (dialog.WantsClearCookies)
-            {
-                dialog.WantsClearCookies = false;
-                if (!_vm.IsServerRunning)
-                {
-                    await ShowInfoAsync("请先启动服务，再清除网易云 Cookie。");
-                }
-                else
-                {
-                    var ok = await _vm.ClearNcmCookiesAsync();
-                    await ShowInfoAsync(ok ? "网易云 Cookie 已清除" : "清除失败，请查看日志");
-                }
-            }
-            else if (dialog.WantsAbout)
-            {
-                dialog.WantsAbout = false;
-                await ShowAboutDialogAsync();
-            }
-            else
-            {
-                keepOpen = false;
-            }
+    /// <summary>
+    /// 打开进度偏移校准对话框：调整期间实时写入 ViewModel 预览；
+    /// 保存则持久化到 AppSettings，取消则回滚到打开前的值。
+    /// </summary>
+    private async Task ShowPositionOffsetDialogAsync()
+    {
+        var original = AppSettings.GetPositionOffsetMs();
+        _vm.PositionOffsetSeconds = original / 1000.0;
+
+        var dialog = new PositionOffsetDialog(_vm, original)
+        {
+            XamlRoot = ContentRoot.XamlRoot,
+            OffsetChanged = ms => _vm.PositionOffsetSeconds = ms / 1000.0,
+        };
+
+        var result = await dialog.ShowAsync();
+
+        if (result == ContentDialogResult.Primary)
+        {
+            AppSettings.SetPositionOffsetMs(dialog.OffsetMs);
+            _vm.PositionOffsetSeconds = dialog.OffsetMs / 1000.0;
+            SettingsOverlay.UpdatePositionOffsetText(dialog.OffsetMs);
+            Logger.Info($"播放进度偏移已保存: {dialog.OffsetMs} ms");
+        }
+        else
+        {
+            _vm.PositionOffsetSeconds = original / 1000.0;
         }
     }
 
@@ -443,6 +477,46 @@ public sealed partial class MainWindow : Window
         await dlg.ShowAsync();
     }
 
+    /// <summary>启动静默检查发现新版本时弹出提醒（仅引导前往发布页，不自动下载）。</summary>
+    private async void OnUpdateAvailable(UpdateInfo info)
+    {
+        try
+        {
+            var panel = new StackPanel { Spacing = 8 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"发现新版本 v{info.LatestVersion}（当前 v{info.CurrentVersion}）",
+                TextWrapping = TextWrapping.Wrap,
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "请前往 GitHub 发布页手动下载安装。",
+                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                Opacity = 0.7,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var dlg = new ContentDialog
+            {
+                Title = "有可用更新",
+                Content = panel,
+                PrimaryButtonText = "打开发布页",
+                CloseButtonText = "忽略",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = ContentRoot.XamlRoot,
+            };
+            var result = await dlg.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                Process.Start(new ProcessStartInfo(info.ReleaseUrl) { UseShellExecute = true });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"显示更新提醒失败: {ex.Message}");
+        }
+    }
+
     private async Task ShowAboutDialogAsync()
     {
         // 用 C# 代码构建关于对话框，避免 XamlCompiler 崩溃
@@ -452,7 +526,22 @@ public sealed partial class MainWindow : Window
         icon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
 
         var title = new TextBlock { Text = "SMTCPlayer", FontSize = 42, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
-        var version = new TextBlock { Text = "WinUI版本 v1.1.0", FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center };
+        // 版本号读程序集 InformationalVersion（形如 1.1.1+26082323500S.<commit>），与 csproj 单一来源
+        var informational = Assembly.GetEntryAssembly()?
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        string versionText;
+        if (string.IsNullOrEmpty(informational))
+        {
+            versionText = "WinUI版本 v0.0.0";
+        }
+        else
+        {
+            // "1.1.1+26082323500S.abc123" → "v1.1.1 (build 26082323500S)"，丢弃构建工具追加的 commit 段
+            var segs = informational.Split('+');
+            var build = segs.Length > 1 ? segs[1].Split('.')[0] : "";
+            versionText = $"WinUI版本 v{segs[0]}" + (build.Length > 0 ? $" (build {build})" : "");
+        }
+        var version = new TextBlock { Text = versionText, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center };
         version.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
 
         var author = new TextBlock { Text = "by FR-NEXT", FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center };
@@ -537,6 +626,13 @@ public sealed partial class MainWindow : Window
         Logger.Info("从托盘恢复窗口");
         try { this.Show(disableEfficiencyMode: true); }
         catch (Exception ex) { Logger.Warn($"Show 失败: {ex.Message}"); }
+    }
+
+    /// <summary>第二次启动实例触发：唤起既有实例并置前。</summary>
+    internal void BringToFrontFromExternalLaunch()
+    {
+        RestoreFromTray();
+        try { this.Activate(); } catch { /* 已激活时忽略 */ }
     }
 
     // ============== 托盘图标（含右键菜单） ==============
@@ -648,11 +744,12 @@ public sealed partial class MainWindow : Window
         else
             Logger.Warn("托盘菜单: 服务未运行，跳过 PIN 设置");
     }
-    private void TrayMenu_Exit_Click(object sender, RoutedEventArgs e)
+    private async void TrayMenu_Exit_Click(object sender, RoutedEventArgs e)
     {
         Logger.Info("托盘菜单: 退出应用");
-        try { _vm.StopPolling(); _server?.Stop(); } catch (Exception ex) { Logger.Warn($"退出时停止服务异常: {ex.Message}"); }
-        _dispatcher.TryEnqueue(this.Close);
+        _forceExit = true;
+        await PerformExitCleanupAsync();
+        _dispatcher.TryEnqueue(Close);
     }
 
     private void ToggleWindowFromTray()
@@ -678,15 +775,143 @@ public sealed partial class MainWindow : Window
 
     // ============== 窗口关闭 ==============
 
-    private void OnClosed(object sender, WindowEventArgs args)
+    /// <summary>
+    /// 拦截标题栏关闭按钮：询问用户"退出 / 最小化到托盘"，可记住选择。
+    /// </summary>
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs e)
     {
-        Logger.Info("=== 主窗口关闭 ===");
+        if (_forceExit)
+        {
+            Logger.Info("窗口关闭：清理已完成的强制退出，放行");
+            return;
+        }
+
+        e.Cancel = true;
+        if (_closeDialogShowing) return;
+        _closeDialogShowing = true;
+        _dispatcher.TryEnqueue(() => _ = HandleCloseRequestAsync());
+    }
+
+    private async Task HandleCloseRequestAsync()
+    {
         try
         {
-            _vm.StopPolling();
-            _server?.Stop();
-            _trayIcon?.Dispose();
+            var remembered = AppSettings.GetCloseAction();
+            string choice;
+
+            if (remembered == "minimize" || remembered == "exit")
+            {
+                choice = remembered;
+                Logger.Info($"关闭行为使用记住的选择: {choice}");
+            }
+            else
+            {
+                var result = await ShowCloseChoiceDialogAsync();
+                if (result == null) return; // 用户取消，什么都不做
+                choice = result.Value.Choice;
+                if (result.Value.Remember) AppSettings.SetCloseAction(choice);
+            }
+
+            if (choice == "minimize")
+            {
+                MinimizeToTray();
+            }
+            else
+            {
+                await PerformExitCleanupAsync();
+                _forceExit = true;
+                Close();
+            }
         }
-        catch (Exception ex) { Logger.Warn($"OnClosed 清理异常: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            Logger.Warn($"关闭请求处理异常: {ex.Message}");
+        }
+        finally
+        {
+            _closeDialogShowing = false;
+        }
+    }
+
+    /// <summary>返回 (Choice, Remember)；用户取消时返回 null。默认选中"最小化到托盘"。</summary>
+    private async Task<(string Choice, bool Remember)?> ShowCloseChoiceDialogAsync()
+    {
+        var panel = new StackPanel { Spacing = 12 };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "您点击了关闭按钮，请问要做什么？",
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var options = new RadioButtons();
+        options.Items.Add(new RadioButton { Content = "退出 SMTCPlayer" });
+        options.Items.Add(new RadioButton { Content = "最小化到托盘运行", IsChecked = true });
+        panel.Children.Add(options);
+
+        panel.Children.Add(new CheckBox { Content = "记住我的选择（可在设置中更改）" });
+
+        var dlg = new ContentDialog
+        {
+            Title = "关闭 SMTC Player",
+            Content = panel,
+            PrimaryButtonText = "确定",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = ContentRoot.XamlRoot,
+        };
+
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return null;
+        return (options.SelectedIndex == 0 ? "exit" : "minimize",
+                (panel.Children[2] as CheckBox)?.IsChecked == true);
+    }
+
+    /// <summary>
+    /// 退出前清理：全部放到后台线程执行并限时等待，
+    /// 修复此前在 UI 线程同步等待 ShutdownPlugins/Stop 导致的关窗卡死。
+    /// </summary>
+    private async Task PerformExitCleanupAsync()
+    {
+        if (_cleanupDone) return;
+        _cleanupDone = true;
+        Logger.Info("=== 开始退出清理（后台线程） ===");
+
+        try
+        {
+            await Task.Run(async () =>
+            {
+                try { _vm.StopPolling(); } catch { }
+                try { await _vm.ShutdownPluginsAsync(); } catch (Exception ex) { Logger.Warn($"插件清理异常: {ex.Message}"); }
+                try { _server?.Stop(); } catch (Exception ex) { Logger.Warn($"服务停止异常: {ex.Message}"); }
+            }).WaitAsync(TimeSpan.FromSeconds(8)); // 总兜底超时，绝不无限等待
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"退出清理超时或异常: {ex.Message}");
+        }
+
+        try { _trayIcon?.Dispose(); } catch { }
+        Logger.Info("退出清理完成");
+    }
+
+    /// <summary>窗口真正关闭后的收尾：仅幂等轻量操作，不再阻塞。</summary>
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        Logger.Info("=== 主窗口已关闭 ===");
+        if (_cleanupDone) return;
+
+        // 非常规路径（系统强制等）：后台补一次清理，不阻塞 UI 线程
+        _cleanupDone = true;
+        Task.Run(async () =>
+        {
+            try
+            {
+                _vm.StopPolling();
+                await _vm.ShutdownPluginsAsync();
+                _server?.Stop();
+            }
+            catch { }
+            try { _trayIcon?.Dispose(); } catch { }
+        });
     }
 }

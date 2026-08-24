@@ -32,6 +32,9 @@ obj/
 logs/
 global.json
 
+# Plugin distribution dir (built from SMTCPlayer.Plugins.* projects)
+smtc-ui/plugins/
+
 # Config (user's local port settings)
 config.json
 

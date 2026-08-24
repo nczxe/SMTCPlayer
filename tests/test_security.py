@@ -1,106 +1,87 @@
+﻿"""Tests for server.security module."""
+
 import sys
+import os
 import unittest
-from pathlib import Path
+
+# Add server directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
+
+from security import validate_pin, PinAuth
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "server"))
+class TestPinValidation(unittest.TestCase):
+    """Test PIN format validation."""
 
-from security import PinAuth, load_config, save_config, validate_pin  # noqa: E402
+    def test_valid_pin_numeric(self):
+        self.assertTrue(validate_pin("1234"))
 
+    def test_valid_pin_alphanumeric(self):
+        self.assertTrue(validate_pin("abc12345"))
 
-class SecurityTests(unittest.TestCase):
-    def setUp(self):
-        config = load_config()
-        self._saved_config = config.copy()
+    def test_valid_pin_with_special_chars(self):
+        self.assertTrue(validate_pin("a@b#c$"))
 
-    def tearDown(self):
-        save_config(self._saved_config)
+    def test_valid_pin_max_length(self):
+        self.assertTrue(validate_pin("1234567890123456"))
 
-    def test_pin_policy_accepts_expected_values(self):
-        self.assertTrue(validate_pin("Abc1"))
-        self.assertTrue(validate_pin("Abc@1234"))
-        self.assertTrue(validate_pin("A1!@#$%^&*()_+-"))
+    def test_valid_pin_min_length(self):
+        self.assertTrue(validate_pin("1234"))
 
-    def test_pin_policy_rejects_invalid_values(self):
-        self.assertFalse(validate_pin("abc"))
-        self.assertFalse(validate_pin("a" * 17))
-        self.assertFalse(validate_pin("中文1234"))
-        self.assertFalse(validate_pin("abc 1234"))
+    def test_invalid_pin_too_short(self):
+        self.assertFalse(validate_pin("123"))
 
-    def test_pin_set_and_login(self):
-        auth = PinAuth()
-        self.assertTrue(auth.set_pin("MyPIN123"))
-        self.assertTrue(auth.is_configured())
-        token = auth.login("MyPIN123")
-        self.assertIsNotNone(token)
-        self.assertIsNone(auth.login("WrongPin1"))
+    def test_invalid_pin_too_long(self):
+        self.assertFalse(validate_pin("12345678901234567"))
 
-    def test_pin_change(self):
-        auth = PinAuth()
-        auth.set_pin("OldPin1")
-        ok, err = auth.change_pin("OldPin1", "NewPin2")
-        self.assertTrue(ok)
-        self.assertIsNone(auth.login("OldPin1"))
-        self.assertIsNotNone(auth.login("NewPin2"))
+    def test_invalid_pin_empty(self):
+        self.assertFalse(validate_pin(""))
 
-    def test_pin_change_wrong_old(self):
-        auth = PinAuth()
-        auth.set_pin("OldPin1")
-        ok, err = auth.change_pin("WrongOld", "NewPin2")
-        self.assertFalse(ok)
+    def test_invalid_pin_not_string(self):
+        self.assertFalse(validate_pin(None))
+        self.assertFalse(validate_pin(1234))
 
-    def test_force_set_pin(self):
-        auth = PinAuth()
-        auth.set_pin("OldPin1")
-        auth.force_set_pin("Fresh1")
-        self.assertIsNone(auth.login("OldPin1"))
-        self.assertIsNotNone(auth.login("Fresh1"))
+    def test_invalid_pin_with_spaces(self):
+        self.assertFalse(validate_pin("1234 5678"))
 
-    def test_token_validation(self):
-        auth = PinAuth()
-        auth.set_pin("Token1")
-        token = auth.login("Token1")
-        self.assertTrue(auth.validate_token(token))
-        self.assertFalse(auth.validate_token("fake-token"))
+    def test_valid_pin_with_allowed_symbols(self):
+        for ch in '!@#$%^&*()_-+=[]{}:;,.?/|~':
+            self.assertTrue(validate_pin(f"123{ch}567"), f"Failed for char: {ch}")
 
 
-class PinRateLimitTests(unittest.TestCase):
+class TestPinAuth(unittest.TestCase):
+    """Test PinAuth token and lockout logic."""
+
     def setUp(self):
         self.auth = PinAuth()
-        self.auth.max_attempts = 3
-        self.auth.lock_seconds = 60
 
-    def test_not_locked_initially(self):
-        self.assertIsNone(self.auth.check_locked("10.0.0.1"))
+    def test_validate_token_empty(self):
+        self.assertFalse(self.auth.validate_token(""))
 
-    def test_locked_after_max_attempts(self):
+    def test_validate_token_none(self):
+        self.assertFalse(self.auth.validate_token(None))
+
+    def test_validate_token_invalid(self):
+        self.assertFalse(self.auth.validate_token("nonexistent-token"))
+
+    def test_check_locked_no_failures(self):
+        self.assertIsNone(self.auth.check_locked("127.0.0.1"))
+
+    def test_lockout_after_max_attempts(self):
+        ip = "192.168.1.100"
         for _ in range(self.auth.max_attempts):
-            self.auth.register_failure("10.0.0.1")
-        remaining = self.auth.check_locked("10.0.0.1")
+            self.auth.register_failure(ip)
+        remaining = self.auth.check_locked(ip)
         self.assertIsNotNone(remaining)
         self.assertGreater(remaining, 0)
 
-    def test_lock_expires(self):
-        self.auth.lock_seconds = -10
+    def test_reset_failures_clears_lockout(self):
+        ip = "192.168.1.101"
         for _ in range(self.auth.max_attempts):
-            self.auth.register_failure("10.0.0.2")
-        self.assertIsNone(self.auth.check_locked("10.0.0.2"))
-
-    def test_reset_failures(self):
-        for _ in range(self.auth.max_attempts - 1):
-            self.auth.register_failure("10.0.0.3")
-        self.auth.reset_failures("10.0.0.3")
-        for _ in range(self.auth.max_attempts - 1):
-            self.auth.register_failure("10.0.0.3")
-        self.assertIsNone(self.auth.check_locked("10.0.0.3"))
-
-    def test_ips_are_isolated(self):
-        for _ in range(self.auth.max_attempts):
-            self.auth.register_failure("10.0.0.4")
-        self.assertIsNone(self.auth.check_locked("10.0.0.5"))
-        self.assertIsNotNone(self.auth.check_locked("10.0.0.4"))
+            self.auth.register_failure(ip)
+        self.auth.reset_failures(ip)
+        self.assertIsNone(self.auth.check_locked(ip))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

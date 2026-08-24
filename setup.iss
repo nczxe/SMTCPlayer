@@ -4,7 +4,11 @@
 
 #define MyAppName "SMTC Player"
 #define MyAppEdition "WPF"
-#define MyAppVersion "1.1.0"
+; 版本号由 build.bat 从 smtc-ui\Directory.Build.props 解析后经 /DMyAppVersion 传入；
+; 此处仅为直接手动运行 ISCC 时兜底值
+#ifndef MyAppVersion
+  #define MyAppVersion "1.1.1"
+#endif
 #define MyAppBuild "1"
 #define MyAppPublisher "FR-NEXT"
 #define MyAppURL "https://github.com/fr-next/NCM-SMTCPlayer"
@@ -38,9 +42,9 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 ; .NET WPF UI（SelfContained，整体复制 publish 输出目录）
-Source: "smtc-ui\SMTCPlayer.Wpf\bin\Release\net10.0-windows\win-x64\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,*.pdb,stderr.log,stdout.log"
+Source: "smtc-ui\SMTCPlayer.Wpf\bin\Release\net10.0-windows\win-x64\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,stderr.log,stdout.log"
 ; Python server（已由 csproj Content 复制到输出目录，上面已包含）
-; netease-watcher（已由 csproj Content 复制到输出目录，上面已包含）
+; 网易云状态监视器 NeteaseWatcher 由网易云增强插件目录自带（plugins\netease-enhance\watcher\）
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -51,6 +55,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: no
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/f /im SMTCPlayer.Wpf.exe"; Flags: runhidden; RunOnceId: "KillSMTCPlayer"
+Filename: "taskkill"; Parameters: "/f /im SMTCPlayerServer.exe"; Flags: runhidden; RunOnceId: "KillSMTCPlayerServer"
+Filename: "taskkill"; Parameters: "/f /im NeteaseWatcher.exe"; Flags: runhidden; RunOnceId: "KillNeteaseWatcher"
+Filename: "taskkill"; Parameters: "/f /im netease-watcher.exe"; Flags: runhidden; RunOnceId: "KillLegacyWatcher"
 
 [Code]
 function InitializeSetup: Boolean;

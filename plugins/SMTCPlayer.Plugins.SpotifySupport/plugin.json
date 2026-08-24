@@ -1,0 +1,11 @@
+{
+  "id": "spotify-support",
+  "name": "Spotify 支持",
+  "version": "1.0.0",
+  "author": "FR-NEXT",
+  "description": "SMTC 基础支持 + 网页端搜索播放（Spotify Web API）。凭证：%LocalAppData%/SMTCPlayer/plugins-data/spotify-support/settings.json 的 client_id/client_secret；也支持 play-request.json 命令文件。",
+  "assembly": "SMTCPlayer.Plugins.SpotifySupport.dll",
+  "entryType": "SMTCPlayer.Plugins.SpotifySupport.SpotifySupportPlugin",
+  "apiVersion": 1,
+  "capabilities": ["search"]
+}
