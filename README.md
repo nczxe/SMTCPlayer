@@ -6,7 +6,7 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.1.1-blue.svg)]() [![Build](https://img.shields.io/badge/Build-26082323500S-blue.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg)]() [![Build](https://img.shields.io/badge/Build-20260927012330A-blue.svg)]()
 
 **官网：[splay.asia](https://splay.asia)**
 
@@ -40,13 +40,19 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 - 网页拉起播放（`MUSIC_U` Cookie，Windows DPAPI 加密存储）
 - Cookie 清除功能
 
+### 局域网与外部控制
+- 局域网实时通信服务（TCP + 逐行 NDJSON，默认端口 9000），支持播放控制指令与状态实时推送
+- `smtcplayer://` URI 协议：可从手机、脚本或其它应用一键唤起控制（应用未运行时自动拉起并按序执行）
+
 ### 原生 UI（WinUI / WPF）
 - 手机扫码连接（二维码实时生成）
 - 横竖屏自适应布局
 - 深色 / 浅色 / 跟随系统主题切换
 - 设置持久化（主题、调试模式等保存到本地）
-- 系统托盘图标（右键菜单：显示窗口、退出）
-- 日志系统（Debug / Info / Warn / Error 四级，自动轮转和清理）
+- 系统托盘图标（右键菜单：显示主窗口 / 隐藏到托盘 / 设置 / 插件管理 / 退出应用）
+- 日志系统（Debug / Info / Warn / Error 四级，分类日志、自动轮转和清理）
+- 日志查看器（实时滚动、过滤、搜索、导出）
+- 插件管理窗口（启停 / 安装 / 卸载 / 重新扫描，仅 WinUI）
 - 调试控制台（实时查看日志输出）
 - PIN 码管理（首次设置 / 修改）
 
@@ -56,12 +62,19 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 - PIN 码认证 + Token 鉴权
 
 ### 插件系统
-- 基于 .NET AssemblyLoadContext 的可收集插件加载
-- 插件契约接口：IPlugin、ISearchProvider、IPlaybackController
-- 事件广播机制：SongChanged、PlaybackStateChanged、VolumeChanged、ServerStateChanged
-- 插件隔离设置存储和日志系统
-- 支持热更新和动态加载/卸载
+- 独立插件系统程序集 `SMTCPlayer.PluginSystem`：插件宿主（发现 / 加载 / 启停 / 安装 / 卸载 / 任务轮询）与核心解耦，以 `PluginManager` 单一 facade 对外提供全部能力
+- 程序集级隔离：插件专属 `PluginLoadContext` 禁止解析宿主程序集，`SMTCPlayer.PluginApi` 契约保持不变（现有插件无感升级）
+- 插件契约接口：`IPlugin`、`IPluginContext`、`IPluginLogger`、`IPluginSettings`、`ISearchProvider`、`IPlaybackController`
+- 事件广播池 `PluginBroadcastPool`：有界队列 + 单读者顺序分发，插件与外部订阅者统一收发
+- zip 插件包安装（`PluginInstaller`）：原子落位，同 Id 升级自动备份，**新版本激活失败自动回滚旧版本**
+- 卸载：移入回收站（可恢复），可选清理插件数据；内置插件仅可禁用
+- 每个插件独立日志与设置存储
 - 内置插件：网易云增强、Spotify 支持
+
+### 更新检查
+- 启动后后台检查更新（每 24 小时节流并去重），发现新版本时提示并展示更新要点
+- 更新要点读取自网站静态资源 `update.json` 的 `releaseNotes`（与 `CHANGELOG.md` 同源生成），仅提示、不自动下载
+- 设置面板「查看更新日志」：一键查看当前最新版本号、发布日期与更新要点，并可跳转网页查看完整日志
 
 ---
 
@@ -73,8 +86,8 @@ Windows 媒体远程控制器 —— 通过局域网用手机浏览器控制电�
 
 | 安装包 | 大小 | 说明 |
 |--------|------|------|
-| `SMTCPlayer_WinUI_Setup_v1.1.1.exe` | ~69 MB | WinUI 版（SelfContained，含 .NET 运行时） |
-| `SMTCPlayer_WPF_Setup_v1.1.1.exe` | ~74 MB | WPF 版（SelfContained，含 .NET 运行时） |
+| `SMTCPlayer_WinUI_Setup_v1.2.0.exe` | ~69 MB | WinUI 版（SelfContained，含 .NET 运行时） |
+| `SMTCPlayer_WPF_Setup_v1.2.0.exe` | ~74 MB | WPF 版（SelfContained，含 .NET 运行时） |
 
 ### 方式二：Python 版
 
@@ -99,6 +112,25 @@ python server\main.py --no-gui
 
 ---
 
+## 局域网控制与 URI 协议
+
+### 局域网实时通信服务
+
+C# 侧自有的 TCP + 逐行 NDJSON 协议，默认端口 **9000**，面向局域网内的自定义客户端：
+
+- 支持指令：`play` / `pause` / `toggle` / `next` / `previous` / `mute` / `volume` / `seek` / `get_status`
+- PIN 经后端校验，鉴权成功后实时推送状态变化
+- 心跳（ping / pong）与空闲超时自动回收
+- 资源限制：单条消息 64KB 上限、并发连接 16 上限、单连接鉴权尝试 5 次上限
+
+### `smtcplayer://` 协议
+
+- 在 `HKCU` 注册（无需管理员，幂等自修复，设置页可开关）
+- 应用已运行时经单实例转发执行并置前窗口；未运行时拉起应用，在后端就绪后按序执行
+- 待执行队列：上限 16 条（满时丢最旧并记 Warn），单条 60 秒超时作废
+
+---
+
 ## 命令行参数（Python 版）
 
 | 参数 | 说明 |
@@ -119,6 +151,10 @@ python server\main.py --no-gui
 - PBKDF2-SHA256（200,000 次迭代）哈希存储
 - HMAC 恒定时间比较，防止时序攻击
 - 首次访问强制设置，后续用 PIN 换取 session token
+
+### 局域网协议鉴权
+- LAN 协议连接同样经后端 PIN 校验后才接受指令
+- 单连接鉴权尝试上限 5 次，超限断开；并发连接与消息体均有上限
 
 ### Cookie 加密
 - 网易云 Cookie 使用 Windows DPAPI 加密
@@ -176,27 +212,50 @@ python server\main.py --no-gui
 ```
 NCM-SMTCPlayer/
 ├── smtc-ui/                           # .NET UI 解决方案
-│   ├── SMTCPlayer.sln                 # 解决方案（6 个项目）
+│   ├── SMTCPlayer.sln                 # 解决方案（8 个项目）
+│   ├── Directory.Build.props          # 应用版本唯一来源（Version / 构建号）
 │   ├── SMTCPlayer.PluginApi/          # 插件契约程序集（零依赖）
 │   │   ├── IPlugin.cs                 #   插件主接口
 │   │   ├── IPluginContext.cs          #   插件上下文接口
+│   │   ├── IPluginLogger.cs           #   插件日志接口
+│   │   ├── IPluginSettings.cs         #   插件设置接口
 │   │   ├── ISearchProvider.cs         #   搜索提供者接口
-│   │   └── PluginEvent.cs             #   事件类型定义
+│   │   ├── IPlaybackController.cs     #   播放控制接口
+│   │   ├── PluginEvent.cs             #   事件类型定义
+│   │   └── PluginApiVersion.cs        #   契约版本
+│   ├── SMTCPlayer.Logging/            # 独立日志程序集（最底层共享件）
+│   │   ├── LogManager.cs              #   分类日志 + 异步缓冲写入
+│   │   ├── InternalLogWriter.cs       #   后台批量落盘线程
+│   │   ├── RingBuffer.cs              #   环形缓冲（供日志查看器）
+│   │   ├── LogThrottle.cs             #   重复日志合并 / Debug 限流
+│   │   └── CategoryLog.cs             #   按来源分类的日志通道
 │   ├── SMTCPlayer.Core/               # 核心类库（共享）
 │   │   ├── Models/                    #   数据模型
-│   │   ├── Services/                  #   SmtcApiClient, FlaskServerManager, Logger
-│   │   ├── ViewModels/               #   MainViewModel（MVVM）
-│   │   └── Plugins/                  #   插件宿主框架
-│   │       ├── PluginHost.cs          #     插件发现/加载/事件广播
-│   │       ├── PluginRegistry.cs      #     启用状态注册表
-│   │       └── PluginEventDispatcher.cs #   事件 diff 引擎
-│   ├── SMTCPlayer.WinUI/             # WinUI3 原生 UI
+│   │   ├── Services/                  #   SmtcApiClient, FlaskServerManager, Logger 门面
+│   │   ├── ViewModels/                #   MainViewModel（MVVM）
+│   │   ├── Plugins/                   #   PluginEventDispatcher（事件 diff 引擎）
+│   │   └── LanProtocol/               #   局域网服务与 URI 协议
+│   │       ├── LanProtocolServer.cs        #  TCP + NDJSON 服务（默认端口 9000）
+│   │       ├── LanCommandDispatcher.cs     #  指令分发（play/pause/…/get_status）
+│   │       ├── LanBroadcastSubscriber.cs   #  状态变化实时推送
+│   │       ├── UriSchemeRegistrar.cs       #  smtcplayer:// 协议注册（HKCU）
+│   │       └── UriCommandProcessor.cs      #  URI 指令排队与执行
+│   ├── SMTCPlayer.PluginSystem/       # 独立插件系统程序集
+│   │   ├── PluginManager.cs           #   插件宿主单一 facade
+│   │   ├── PluginLoadContext.cs       #   程序集级隔离
+│   │   ├── PluginInstaller.cs         #   zip 安装 / 升级回滚 / 卸载
+│   │   ├── PluginBroadcastPool.cs     #   事件广播池（有界队列）
+│   │   ├── PluginRegistry.cs          #   启用状态注册表
+│   │   └── PluginContextImpl.cs       #   插件上下文实现
+│   ├── SMTCPlayer.WinUI/              # WinUI3 原生 UI
 │   │   ├── Dialogs/                   #   PinSetup、PositionOffset 校准对话框
 │   │   ├── Services/                  #   AppSettings 持久化
 │   │   ├── SettingsPanel.xaml         #   全窗口设置面板
+│   │   ├── PluginManagerWindow.xaml   #   插件管理窗口
+│   │   ├── LogViewerWindow.xaml       #   日志查看器
 │   │   ├── MainWindow.xaml            #   主窗口（Mica + Acrylic）
 │   │   └── App.xaml                   #   应用入口
-│   └── SMTCPlayer.Wpf/              # WPF UI
+│   └── SMTCPlayer.Wpf/               # WPF UI
 │       ├── Themes/                    #   深色/浅色主题
 │       ├── MainWindow.xaml            #   主窗口
 │       └── SettingsWindow.xaml        #   设置窗口
@@ -225,6 +284,7 @@ NCM-SMTCPlayer/
 ├── setup.iss                          # Inno Setup - WPF 安装包脚本
 ├── setup-winui.iss                    # Inno Setup - WinUI 安装包脚本
 ├── SMTCPlayer.spec                    # PyInstaller 构建配置
+├── SMTCPlayerServer.spec              # PyInstaller 服务端构建配置
 └── LICENSE                            # MIT 许可证
 ```
 
@@ -253,14 +313,20 @@ NCM-SMTCPlayer/
 └───────────────────────────────────────────────┼──────────────┘
                                                 │
 ┌───────────────────────────────────────────────▼──────────────┐
-│                 .NET 插件宿主 (PluginHost)                    │
+│       .NET 插件宿主 (SMTCPlayer.PluginSystem · PluginManager) │
 │  ┌─────────────────────┐  ┌─────────────────────────────┐   │
 │  │  NeteaseEnhance     │  │  SpotifySupport             │   │
 │  │  网易云增强插件       │  │  Spotify 支持插件            │   │
 │  │  (搜索/播放/监视器)  │  │  (搜索/播放)                 │   │
 │  └─────────────────────┘  └─────────────────────────────┘   │
-│  事件广播: SongChanged / PlaybackStateChanged / VolumeChanged│
+│  事件广播池 PluginBroadcastPool                              │
+│  SongChanged / PlaybackStateChanged / VolumeChanged          │
 └──────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│       局域网服务 (SMTCPlayer.Core · LanProtocol)             │
+│   TCP + NDJSON (默认端口 9000)  ←→  自定义客户端 / URI 指令   │
+└─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │              桌面 UI（三选一）                               │
@@ -289,6 +355,8 @@ build.bat
 3. 编译 WinUI 项目（`dotnet build`，SelfContained）
 4. 发布 WPF 项目（`dotnet publish --self-contained`）
 5. Inno Setup 分别构建两个安装包 → `dist\SMTCPlayer_WPF_Setup_v*.exe` 和 `dist\SMTCPlayer_WinUI_Setup_v*.exe`
+
+版本号从 `smtc-ui\Directory.Build.props` 解析后传入 Inno Setup（发版时只改这一处）。
 
 ### 完整发布流程
 
@@ -325,7 +393,9 @@ python -m pytest tests -v
 | WinUI | .NET 10, Windows App SDK 1.8, H.NotifyIcon.WinUI, QRCoder |
 | WPF | .NET 10, WPF, QRCoder |
 | Python 服务端 | Flask, pycaw, qrcode, pystray, Pillow, pycryptodome, numpy, winrt-*, requests |
-| 插件系统 | .NET AssemblyLoadContext (可收集), 自定义 PluginApi 契约 |
+| 插件系统 | 独立 `SMTCPlayer.PluginSystem` 程序集, .NET AssemblyLoadContext (可收集), 程序集级隔离, 自定义 PluginApi 契约 |
+| 日志系统 | 独立 `SMTCPlayer.Logging` 程序集, 异步缓冲写入 + 分类日志 |
+| 局域网控制 | TCP + NDJSON 自有协议, `smtcplayer://` URI 协议 (HKCU 注册) |
 | 安全 | PBKDF2-SHA256 (200,000 次迭代), Windows DPAPI, HMAC 恒定时间比较 |
 | 构建工具 | PyInstaller, dotnet CLI, Inno Setup 6/7 |
 
