@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using QRCoder;
+using SMTCPlayer.Core.LanProtocol;
 using SMTCPlayer.Core.Services;
 using SMTCPlayer.Core.ViewModels;
 using SMTCPlayer.WinUI.Dialogs;
@@ -29,12 +30,17 @@ public sealed partial class MainWindow : Window
 {
     private MainViewModel _vm = null!;
     private FlaskServerManager? _server;
+    private SmtcApiClient? _apiClient;
+    private LanProtocolServer? _lanServer;
+    private UriCommandProcessor? _uriProcessor;
     private DispatcherQueue _dispatcher = null!;
     private H.NotifyIcon.TaskbarIcon? _trayIcon;
     private bool _authenticating;
     private bool _forceExit;        // 托盘退出/确认退出后置位，放行真正的窗口关闭
     private bool _cleanupDone;      // 退出清理只执行一次
     private bool _closeDialogShowing;
+    private PluginManagerWindow? _pluginWindow; // 插件管理窗口（单例，关闭即清引用）
+    private LogViewerWindow? _logViewerWindow;  // 日志查看器（单例，关闭即清引用）
 
     public MainViewModel Vm => _vm;
 
@@ -96,6 +102,8 @@ public sealed partial class MainWindow : Window
         var port = 8888;
 
         var apiClient = new SmtcApiClient("127.0.0.1", port);
+        _apiClient = apiClient;
+        _uriProcessor = new UriCommandProcessor(apiClient, BringToFrontFromExternalLaunch);
         _server = new FlaskServerManager(pythonPath, serverDir);
         _vm = new MainViewModel(apiClient, _server, port, new WinUIClipboardService());
         _vm.PropertyChanged += OnViewModelChanged;
@@ -112,10 +120,99 @@ public sealed partial class MainWindow : Window
         SettingsOverlay.PinRequested += () => _ = HandleSettingsPinRequestAsync();
         SettingsOverlay.AboutRequested += () => _ = ShowAboutDialogAsync();
         SettingsOverlay.PositionOffsetRequested += () => _ = ShowPositionOffsetDialogAsync();
+        SettingsOverlay.PluginManagerRequested += OpenPluginManagerWindow;
+        SettingsOverlay.LogViewerRequested += OpenLogViewerWindow;
+        SettingsOverlay.LanSettingsChanged += RestartLanServer;
+        SettingsOverlay.UriSchemeSettingChanged += ApplyUriSchemeSetting;
+
+        RestartLanServer();
+        ApplyUriSchemeSetting();
 
         UpdateQrCode($"http://{FlaskServerManager.GetLocalIp()}:{_vm.Port}");
         UpdateVolumeIcon();
         UpdatePlayPauseIcon();
+    }
+
+    // ============== 局域网协议服务 ==============
+
+    /// <summary>按当前设置重启局域网协议服务；设置关闭时仅停止。</summary>
+    private void RestartLanServer() => _ = StartLanServerAsync();
+
+    private async Task StartLanServerAsync()
+    {
+        await StopLanServerAsync();
+
+        if (_apiClient == null) return;
+        if (!AppSettings.GetLanEnabled()) return;
+
+        try
+        {
+            var options = new LanProtocolOptions
+            {
+                Enabled = true,
+                Port = AppSettings.GetLanPort(),
+                Scope = string.Equals(AppSettings.GetLanScope(), "all", StringComparison.OrdinalIgnoreCase)
+                    ? LanListenScope.AllInterfaces
+                    : LanListenScope.Loopback,
+            };
+            var server = new LanProtocolServer(options, _apiClient, _vm.PluginManager);
+            await server.StartAsync();
+            _lanServer = server;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"局域网协议服务启动失败: {ex.Message}");
+            _lanServer = null;
+        }
+    }
+
+    private async Task StopLanServerAsync()
+    {
+        var server = _lanServer;
+        _lanServer = null;
+        if (server == null) return;
+        try { await server.DisposeAsync(); }
+        catch (Exception ex) { Logger.Warn($"局域网协议服务停止异常: {ex.Message}"); }
+    }
+
+    // ============== smtcplayer:// URI 协议 ==============
+
+    /// <summary>按当前设置注册/注销 <c>smtcplayer://</c> 协议（启动时幂等自修复）。</summary>
+    private void ApplyUriSchemeSetting()
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exePath))
+            {
+                Logger.Warn("无法获取当前可执行文件路径，跳过 URI 协议注册");
+                return;
+            }
+            UriSchemeRegistrar.Apply(AppSettings.GetUriSchemeEnabled(), exePath);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"应用 URI 协议设置异常: {ex.Message}");
+        }
+    }
+
+    /// <summary>接收外部（单实例转发/启动参数）传入的 <c>smtcplayer://</c> URI。</summary>
+    internal void EnqueueUri(string uri)
+    {
+        if (_uriProcessor == null)
+        {
+            Logger.Warn($"URI 处理器尚未就绪，忽略命令: {uri}");
+            return;
+        }
+
+        if (!UriCommandProcessor.TryParse(uri, out var command))
+        {
+            Logger.Warn($"无法识别的 URI 命令: {uri}");
+            return;
+        }
+
+        Logger.Info($"收到 URI 命令: {command.Action}");
+        _uriProcessor.Enqueue(command);
     }
 
     private static string? FindPython()
@@ -158,8 +255,16 @@ public sealed partial class MainWindow : Window
             {
                 case nameof(MainViewModel.IsServerRunning):
                     UpdateViewVisibility();
-                    if (_vm.IsServerRunning && !_authenticating)
-                        _ = AuthenticateAfterStartAsync();
+                    if (_vm.IsServerRunning)
+                    {
+                        _uriProcessor?.MarkBackendReady();
+                        if (!_authenticating)
+                            _ = AuthenticateAfterStartAsync();
+                    }
+                    else
+                    {
+                        _uriProcessor?.MarkBackendNotReady();
+                    }
                     break;
                 case nameof(MainViewModel.LanUrl):
                     UpdateQrCode(_vm.LanUrl);
@@ -279,7 +384,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            Logger.Info($"UpdateCoverImage: 加载封面: {url}");
+            Logger.Debug($"UpdateCoverImage: 加载封面: {url}");
             var bitmap = new BitmapImage
             {
                 UriSource = new Uri(url),
@@ -404,7 +509,7 @@ public sealed partial class MainWindow : Window
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        SettingsOverlay.LoadState(RootGrid.RequestedTheme, _vm.PluginHost);
+        SettingsOverlay.LoadState(RootGrid.RequestedTheme, _vm.PluginManager);
         SettingsOverlay.Visibility = Visibility.Visible;
     }
 
@@ -417,6 +522,82 @@ public sealed partial class MainWindow : Window
             return;
         }
         await OpenPinSetupDialogAsync(resetMode: false);
+    }
+
+    // ============== 插件管理窗口（单例） ==============
+
+    /// <summary>
+    /// 打开插件管理窗口；已存在则 Activate 置前。窗口关闭时清引用，
+    /// 传入主窗口当前主题与 Vm.PluginManager（窗口仅消费 PluginSystem 公开 API）。
+    /// </summary>
+    private void OpenPluginManagerWindow()
+    {
+        try
+        {
+            if (_pluginWindow != null)
+            {
+                _pluginWindow.Activate();
+                return;
+            }
+
+            _pluginWindow = new PluginManagerWindow(_vm.PluginManager, RootGrid.RequestedTheme);
+            _pluginWindow.Closed += (_, _) => _pluginWindow = null;
+            _pluginWindow.Activate();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"打开插件管理窗口失败: {ex.Message}");
+        }
+    }
+
+    // ============== 日志查看器（单例） ==============
+
+    /// <summary>
+    /// 打开日志查看器；已存在则 Activate 置前。窗口关闭时清引用，
+    /// 传入主窗口当前主题（窗口仅消费 SMTCPlayer.Logging 公开 API）。
+    /// </summary>
+    private void OpenLogViewerWindow()
+    {
+        try
+        {
+            if (_logViewerWindow != null)
+            {
+                _logViewerWindow.Activate();
+                return;
+            }
+
+            _logViewerWindow = new LogViewerWindow(RootGrid.RequestedTheme);
+            _logViewerWindow.Closed += (_, _) => _logViewerWindow = null;
+            _logViewerWindow.Activate();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"打开日志查看器失败: {ex.Message}");
+        }
+    }
+
+    // ============== 子窗口收尾 ==============
+
+    /// <summary>
+    /// 关闭所有由主窗口派生的子窗口（插件管理 / 日志查看器）。
+    /// WinUI 3 应用需在所有窗口关闭后进程才退出，遗漏子窗口会导致主窗口关闭后进程驻留。
+    /// 必须在 UI 线程调用；引用置空由各窗口 Closed 回调或此处兜底完成。
+    /// </summary>
+    private void CloseChildWindows()
+    {
+        if (_pluginWindow != null)
+        {
+            try { _pluginWindow.Close(); }
+            catch (Exception ex) { Logger.Warn($"关闭插件管理窗口异常: {ex.Message}"); }
+            _pluginWindow = null;
+        }
+
+        if (_logViewerWindow != null)
+        {
+            try { _logViewerWindow.Close(); }
+            catch (Exception ex) { Logger.Warn($"关闭日志查看器异常: {ex.Message}"); }
+            _logViewerWindow = null;
+        }
     }
 
     // ============== 播放进度校准 ==============
@@ -488,12 +669,50 @@ public sealed partial class MainWindow : Window
                 Text = $"发现新版本 v{info.LatestVersion}（当前 v{info.CurrentVersion}）",
                 TextWrapping = TextWrapping.Wrap,
             });
+
+            var notes = info.ReleaseNotes;
+            if (notes is { Count: > 0 })
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "本次更新内容：",
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+
+                var notesPanel = new StackPanel { Spacing = 4 };
+                foreach (var note in notes)
+                {
+                    notesPanel.Children.Add(new TextBlock
+                    {
+                        Text = "• " + note,
+                        Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                        TextWrapping = TextWrapping.Wrap,
+                    });
+                }
+
+                panel.Children.Add(new ScrollViewer
+                {
+                    Content = notesPanel,
+                    MaxHeight = 240,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollMode = ScrollMode.Disabled,
+                });
+            }
+
             panel.Children.Add(new TextBlock
             {
-                Text = "请前往 GitHub 发布页手动下载安装。",
+                Text = "仅检查提示，不会自动下载。请前往发布页手动下载安装。",
                 Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
                 Opacity = 0.7,
                 TextWrapping = TextWrapping.Wrap,
+            });
+            panel.Children.Add(new HyperlinkButton
+            {
+                Content = "查看完整更新日志",
+                NavigateUri = new Uri("https://splay.asia/update"),
+                FontSize = 12,
+                Padding = new Thickness(0),
             });
 
             var dlg = new ContentDialog
@@ -604,6 +823,8 @@ public sealed partial class MainWindow : Window
         finally
         {
             _vm.IsServerRunning = false;
+            // 与 MainViewModel.StopServer 保持一致：向插件广播池投递服务已停止事件
+            _vm.PluginManager.PublishServerState(false);
         }
     }
 
@@ -653,9 +874,9 @@ public sealed partial class MainWindow : Window
                     Background = new SolidColorBrush(Microsoft.UI.Colors.DodgerBlue),
                 },
                 LeftClickCommand = new RelayCommand(_ => ToggleWindowFromTray()),
-                RightClickCommand = new RelayCommand(_ => ShowTrayContextMenu()),
                 NoLeftClickDelay = true,
-                ContextMenuMode = ContextMenuMode.ActiveWindow,
+                ContextMenuMode = ContextMenuMode.PopupMenu,
+                ContextFlyout = BuildTrayContextMenu(),
             };
 
             _trayIcon.ForceCreate();
@@ -675,76 +896,60 @@ public sealed partial class MainWindow : Window
 
         var restore = new MenuFlyoutItem { Text = "显示主窗口" };
         restore.Icon = new FontIcon { Glyph = "\uE737" };
-        restore.Click += TrayMenu_Restore_Click;
+        restore.Command = new RelayCommand(_ => TrayMenu_Restore());
         flyout.Items.Add(restore);
 
         var hide = new MenuFlyoutItem { Text = "隐藏到托盘" };
         hide.Icon = new FontIcon { Glyph = "\uE949" };
-        hide.Click += TrayMenu_Hide_Click;
+        hide.Command = new RelayCommand(_ => TrayMenu_Hide());
         flyout.Items.Add(hide);
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
         var settings = new MenuFlyoutItem { Text = "设置" };
         settings.Icon = new FontIcon { Glyph = "\uE713" };
-        settings.Click += TrayMenu_Settings_Click;
+        settings.Command = new RelayCommand(_ => TrayMenu_Settings());
         flyout.Items.Add(settings);
+
+        var plugins = new MenuFlyoutItem { Text = "插件管理" };
+        plugins.Icon = new FontIcon { Glyph = "\uE912" };
+        plugins.Command = new RelayCommand(_ => TrayMenu_Plugins());
+        flyout.Items.Add(plugins);
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
         var exit = new MenuFlyoutItem { Text = "退出应用" };
         exit.Icon = new FontIcon { Glyph = "\uE8BB" };
-        exit.Click += TrayMenu_Exit_Click;
+        exit.Command = new RelayCommand(async _ => await TrayMenu_ExitAsync());
         flyout.Items.Add(exit);
 
         return flyout;
     }
 
-    private void ShowTrayContextMenu()
-    {
-        Logger.Debug("ShowTrayContextMenu: 托盘右键被触发");
-        try
-        {
-            _dispatcher.TryEnqueue(() =>
-            {
-                // WinUI 3 的 Flyout.ShowAt 需要有效的 XamlRoot，所以先确保窗口可见
-                if (!this.AppWindow.IsVisible) RestoreFromTray();
-
-                TrayMenuAnchor.Visibility = Visibility.Visible;
-                TrayMenuAnchor.HorizontalAlignment = HorizontalAlignment.Left;
-                TrayMenuAnchor.VerticalAlignment = VerticalAlignment.Bottom;
-                var flyout = BuildTrayContextMenu();
-                flyout.ShowAt(TrayMenuAnchor);
-                Logger.Debug("ShowTrayContextMenu: 菜单已显示");
-            });
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"显示托盘菜单失败：{ex.Message}");
-        }
-    }
-
-    private void TrayMenu_Restore_Click(object sender, RoutedEventArgs e)
+    private void TrayMenu_Restore()
     {
         Logger.Info("托盘菜单: 显示主窗口");
         RestoreFromTray();
     }
-    private void TrayMenu_Hide_Click(object sender, RoutedEventArgs e)
+    private void TrayMenu_Hide()
     {
         Logger.Info("托盘菜单: 隐藏到托盘");
         MinimizeToTray();
     }
-    private async void TrayMenu_Settings_Click(object sender, RoutedEventArgs e)
+    private void TrayMenu_Settings()
     {
-        Logger.Info("托盘菜单: 设置 PIN");
+        Logger.Info("托盘菜单: 设置");
         RestoreFromTray();
-        await Task.Delay(100);
-        if (_vm.IsServerRunning)
-            await OpenPinSetupDialogAsync(resetMode: false);
-        else
-            Logger.Warn("托盘菜单: 服务未运行，跳过 PIN 设置");
+        SettingsOverlay.LoadState(RootGrid.RequestedTheme, _vm.PluginManager);
+        SettingsOverlay.Visibility = Visibility.Visible;
     }
-    private async void TrayMenu_Exit_Click(object sender, RoutedEventArgs e)
+    private void TrayMenu_Plugins()
+    {
+        Logger.Info("托盘菜单: 插件管理");
+        RestoreFromTray();
+        OpenPluginManagerWindow();
+    }
+    private async Task TrayMenu_ExitAsync()
     {
         Logger.Info("托盘菜单: 退出应用");
         _forceExit = true;
@@ -881,6 +1086,8 @@ public sealed partial class MainWindow : Window
             await Task.Run(async () =>
             {
                 try { _vm.StopPolling(); } catch { }
+                try { await StopLanServerAsync(); } catch (Exception ex) { Logger.Warn($"局域网协议服务清理异常: {ex.Message}"); }
+                try { _uriProcessor?.Dispose(); } catch (Exception ex) { Logger.Warn($"URI 命令处理器清理异常: {ex.Message}"); }
                 try { await _vm.ShutdownPluginsAsync(); } catch (Exception ex) { Logger.Warn($"插件清理异常: {ex.Message}"); }
                 try { _server?.Stop(); } catch (Exception ex) { Logger.Warn($"服务停止异常: {ex.Message}"); }
             }).WaitAsync(TimeSpan.FromSeconds(8)); // 总兜底超时，绝不无限等待
@@ -890,6 +1097,8 @@ public sealed partial class MainWindow : Window
             Logger.Warn($"退出清理超时或异常: {ex.Message}");
         }
 
+        CloseChildWindows();
+
         try { _trayIcon?.Dispose(); } catch { }
         Logger.Info("退出清理完成");
     }
@@ -898,20 +1107,39 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         Logger.Info("=== 主窗口已关闭 ===");
-        if (_cleanupDone) return;
+        CloseChildWindows();
 
-        // 非常规路径（系统强制等）：后台补一次清理，不阻塞 UI 线程
+        if (_cleanupDone)
+        {
+            // 常规退出：清理已完成，立即强制结束进程，确保彻底关闭。
+            ForceExitProcess();
+            return;
+        }
+
+        // 非常规路径（系统强制等）：后台补一次清理，完成后强制结束进程，不阻塞 UI 线程
         _cleanupDone = true;
         Task.Run(async () =>
         {
             try
             {
                 _vm.StopPolling();
+                await StopLanServerAsync();
                 await _vm.ShutdownPluginsAsync();
                 _server?.Stop();
             }
             catch { }
             try { _trayIcon?.Dispose(); } catch { }
-        });
+        }).ContinueWith(_ => ForceExitProcess());
+    }
+
+    /// <summary>
+    /// 兜底结束进程：WinUI 3 在托盘图标（H.NotifyIcon 的隐藏消息窗口）等原生资源
+    /// 未随主窗口关闭一并释放时，主窗口关闭后进程仍可能驻留于任务管理器。
+    /// 清理完成后显式退出，保证进程彻底结束（日志由 LogManager 的 ProcessExit 兜底冲刷）。
+    /// </summary>
+    private static void ForceExitProcess()
+    {
+        try { Logger.Info("显式结束进程，确保完全退出"); } catch { }
+        Environment.Exit(0);
     }
 }

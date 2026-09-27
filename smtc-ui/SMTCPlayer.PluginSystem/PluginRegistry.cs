@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SMTCPlayer.Core.Plugins;
+namespace SMTCPlayer.PluginSystem;
 
 /// <summary>
 /// 插件启用状态注册表，持久化到 %LocalAppData%/SMTCPlayer/plugins.json。

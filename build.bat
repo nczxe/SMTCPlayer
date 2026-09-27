@@ -9,6 +9,9 @@ echo.
 set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
+REM 禁用 MSBuild 节点复用，避免构建后残留多个 dotnet.exe（任务管理器中的 ".NET Host"）
+set "MSBUILDDISABLENODEREUSE=1"
+
 echo [1/6] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 (
@@ -84,6 +87,13 @@ if errorlevel 1 (
 )
 echo [OK] WPF UI published to smtc-ui\SMTCPlayer.Wpf\bin\Release\net10.0-windows\win-x64\publish\
 :skip_dotnet
+
+REM 关闭 dotnet 构建服务器（MSBuild / VB-C# 编译器），确保构建后不残留 dotnet.exe
+where dotnet >nul 2>&1
+if not errorlevel 1 (
+    echo [Info] Shutting down dotnet build servers...
+    dotnet build-server shutdown >nul 2>&1
+)
 echo.
 
 echo [6/6] Looking for Inno Setup compiler...

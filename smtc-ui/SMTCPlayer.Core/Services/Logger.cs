@@ -1,130 +1,115 @@
 using System.Diagnostics;
-using System.Text;
+using System.Runtime.CompilerServices;
+using SMTCPlayer.Logging;
 
 namespace SMTCPlayer.Core.Services;
 
 /// <summary>
-/// 轻量级文件日志器。线程安全，支持级别过滤、文件轮转与旧日志自动清理。
+/// 轻量级文件日志器的兼容门面：公共 API 保持不变，
+/// 实现转发到 SMTCPlayer.Logging 引擎（后台批量写盘、按日分卷、插件路由、量控）。
+/// 线程安全，支持级别过滤、分类覆盖与旧日志自动清理；
+/// 按调用方程序集自动归类（Core / WinUI / Wpf / App）。
 /// </summary>
 public static class Logger
 {
-    private static readonly object _lock = new();
-    private static string _logDir = "";
-
-    /// <summary>单日志文件最大大小（字节），超出后自动轮转到带时间戳的归档文件。</summary>
-    private const long MaxFileSize = 5 * 1024 * 1024; // 5 MB
-
-    /// <summary>超过此天数的日志文件会在 Init 时自动清理。</summary>
-    private const int RetentionDays = 7;
+    private static Action<string>? _debugWindowSink;
+    private static Action<LogEntry>? _sinkBridge;
 
     /// <summary>当前日志级别阈值。低于此级别的日志会被丢弃。</summary>
-    public static LogLevel MinLevel { get; set; } = LogLevel.Debug;
-
-    public static string LogFilePath { get; private set; } = "";
-
-    public static void Init(string? logDir = null)
+    public static LogLevel MinLevel
     {
-        _logDir = logDir ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
-        Directory.CreateDirectory(_logDir);
-
-        // 读取级别配置（环境变量 SMTC_LOG_LEVEL = DEBUG|INFO|WARN|ERROR）
-        var envLevel = Environment.GetEnvironmentVariable("SMTC_LOG_LEVEL");
-        if (!string.IsNullOrWhiteSpace(envLevel) && Enum.TryParse<LogLevel>(envLevel, true, out var parsed))
-        {
-            MinLevel = parsed;
-        }
-
-        LogFilePath = Path.Combine(_logDir, $"smtc-{DateTime.Now:yyyyMMdd-HHmmss}.log");
-
-        // 清理过期日志
-        CleanupOldLogs();
-
-        Info("Logger 初始化完成");
-        Info($"日志文件: {LogFilePath}");
-        Info($"日志级别: {MinLevel}");
-        Info($"工作目录: {AppDomain.CurrentDomain.BaseDirectory}");
-        Info($"运行平台: {Environment.OSVersion}");
-        Info($".NET 版本: {Environment.Version}");
+        get => (LogLevel)LogManager.MinLevel;
+        set => LogManager.MinLevel = (Logging.LogLevel)value;
     }
 
+    /// <summary>当前主日志文件路径（由引擎决定，默认位于 %LocalAppData%\SMTCPlayer\logs）。</summary>
+    public static string LogFilePath => LogManager.LogFilePath;
+
+    /// <summary>
+    /// 初始化日志引擎。读取级别配置（环境变量 SMTC_LOG_LEVEL = DEBUG|INFO|WARN|ERROR）、
+    /// 清理过期日志、启动后台写线程并写入启动横幅。幂等，重复调用安全。
+    /// </summary>
+    public static void Init(string? logDir = null) => LogManager.Init(logDir);
+
+    /// <summary>
+    /// 调试窗口订阅回调：每条已受理日志触发一次，格式 [LEVEL] message。
+    /// 重复赋值安全（旧桥接自动解绑）。
+    /// </summary>
+    public static Action<string>? DebugWindowSink
+    {
+        get => _debugWindowSink;
+        set
+        {
+            if (_sinkBridge != null)
+                LogManager.EntryLogged -= _sinkBridge;
+            _debugWindowSink = value;
+            if (value == null)
+            {
+                _sinkBridge = null;
+                return;
+            }
+            _sinkBridge = entry => value($"[{entry.Level}] {entry.Message}");
+            LogManager.EntryLogged += _sinkBridge;
+        }
+    }
+
+    // 注意：NoInlining 保证栈帧结构稳定，使 ResolveCallerCategory 的帧偏移可靠；
+    // 方法内必须用完全限定名 System.Diagnostics.Debug，避免与本类 Debug 方法歧义
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Debug(string message) => Write(LogLevel.Debug, message);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Info(string message) => Write(LogLevel.Info, message);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Warn(string message) => Write(LogLevel.Warn, message);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Error(string message) => Write(LogLevel.Error, message);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Error(string message, Exception ex) =>
         Write(LogLevel.Error, $"{message}\n{ex}");
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static void Write(LogLevel level, string message)
     {
-        if (level < MinLevel) return;
-
-        var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level,-5}] {message}";
-
-        // 注意：这里必须用完全限定名 System.Diagnostics.Debug，避免与本类新增的 Logger.Debug 方法歧义
-        System.Diagnostics.Debug.WriteLine(line);
-
-        try
+        var log = LogManager.GetLogger(ResolveCallerCategory());
+        switch (level)
         {
-            lock (_lock)
-            {
-                if (string.IsNullOrEmpty(LogFilePath)) return;
-                File.AppendAllText(LogFilePath, line + Environment.NewLine, Encoding.UTF8);
-                RotateIfNeeded();
-            }
+            case LogLevel.Debug: log.Debug(message); break;
+            case LogLevel.Info: log.Info(message); break;
+            case LogLevel.Warn: log.Warn(message); break;
+            case LogLevel.Error: log.Error(message); break;
         }
-        catch { /* 日志写入失败不应影响主流程 */ }
-
-        try
-        {
-            DebugWindowSink?.Invoke($"[{level}] {message}");
-        }
-        catch { }
     }
 
     /// <summary>
-    /// 当当前日志文件超过 <see cref="MaxFileSize"/> 时，将其重命名为带后缀的归档文件，
-    /// 然后重置 <see cref="LogFilePath"/> 继续写入新文件。
+    /// 按调用方程序集归类分类。栈帧采样开销为微秒级，现有调用频率下可接受。
     /// </summary>
-    private static void RotateIfNeeded()
+    private static string ResolveCallerCategory()
     {
         try
         {
-            if (!File.Exists(LogFilePath)) return;
-            var info = new FileInfo(LogFilePath);
-            if (info.Length < MaxFileSize) return;
-
-            var dir = Path.GetDirectoryName(LogFilePath) ?? _logDir;
-            var name = Path.GetFileNameWithoutExtension(LogFilePath);
-            var archive = Path.Combine(dir, $"{name}-rotated-{DateTime.Now:HHmmss}.log");
-            File.Move(LogFilePath, archive);
-            // 下一条 Write 会自动创建新文件（File.AppendAllText 行为）
-            Info($"日志已轮转，归档为: {Path.GetFileName(archive)}");
-        }
-        catch { /* 轮转失败不影响写入 */ }
-    }
-
-    /// <summary>删除超过 <see cref="RetentionDays"/> 天的 .log 文件。</summary>
-    private static void CleanupOldLogs()
-    {
-        try
-        {
-            var cutoff = DateTime.Now.AddDays(-RetentionDays);
-            foreach (var file in Directory.EnumerateFiles(_logDir, "*.log"))
+            // 帧 0=ResolveCallerCategory, 1=Write, 2=Logger.Debug/Info/..., 3=业务调用方
+            var assemblyName = new StackFrame(3).GetMethod()?.DeclaringType?.Assembly.GetName().Name;
+            return assemblyName switch
             {
-                var info = new FileInfo(file);
-                if (info.LastWriteTime < cutoff)
-                {
-                    try { info.Delete(); } catch { }
-                }
-            }
+                "SMTCPlayer.Core" => "Core",
+                "SMTCPlayer.WinUI" => "WinUI",
+                "SMTCPlayer.Wpf" => "Wpf",
+                _ => "App",
+            };
         }
-        catch { /* 清理失败不影响启动 */ }
+        catch
+        {
+            return "App";
+        }
     }
-
-    public static Action<string>? DebugWindowSink { get; set; }
 }
 
-/// <summary>日志级别（数值越大，优先级越高）。</summary>
+/// <summary>日志级别（数值越大，优先级越高；与 SMTCPlayer.Logging.LogLevel 数值一致）。</summary>
 public enum LogLevel
 {
     Debug = 0,

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using SMTCPlayer.Core.LanProtocol;
 
 namespace SMTCPlayer.WinUI.Services;
 
@@ -114,6 +115,53 @@ public static class AppSettings
         Save();
     }
 
+    /// <summary>局域网协议端口下限（1024）与上限（65535）。</summary>
+    private const int MinLanPort = 1024;
+    private const int MaxLanPort = 65535;
+
+    /// <summary>是否启用局域网协议服务（默认关闭）。</summary>
+    public static bool GetLanEnabled() => _current.LanEnabled;
+
+    /// <summary>更新局域网协议服务开关并保存。</summary>
+    public static void SetLanEnabled(bool enabled)
+    {
+        _current.LanEnabled = enabled;
+        Save();
+    }
+
+    /// <summary>获取局域网协议监听端口（1024-65535，默认 9000）。</summary>
+    public static int GetLanPort() => Math.Clamp(_current.LanPort, MinLanPort, MaxLanPort);
+
+    /// <summary>更新局域网协议监听端口并保存（1024-65535）。</summary>
+    public static void SetLanPort(int port)
+    {
+        _current.LanPort = Math.Clamp(port, MinLanPort, MaxLanPort);
+        Save();
+    }
+
+    /// <summary>获取监听范围："loopback"=仅本机；"all"=全网卡。默认 loopback。</summary>
+    public static string GetLanScope() => NormalizeLanScope(_current.LanScope);
+
+    /// <summary>更新监听范围并保存（仅接受 "loopback" / "all"）。</summary>
+    public static void SetLanScope(string? scope)
+    {
+        _current.LanScope = NormalizeLanScope(scope);
+        Save();
+    }
+
+    private static string NormalizeLanScope(string? scope) =>
+        string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "loopback";
+
+    /// <summary>是否注册 <c>smtcplayer://</c> 自定义 URL 协议（默认开启）。</summary>
+    public static bool GetUriSchemeEnabled() => _current.UriSchemeEnabled;
+
+    /// <summary>更新 URI 协议注册开关并保存。</summary>
+    public static void SetUriSchemeEnabled(bool enabled)
+    {
+        _current.UriSchemeEnabled = enabled;
+        Save();
+    }
+
     /// <summary>获取主题</summary>
     public static ElementTheme GetTheme()
     {
@@ -144,4 +192,16 @@ public class SettingsData
 
     /// <summary>歌曲进度偏移（毫秒）：校准网易云监视器读取的播放进度，±5000。</summary>
     public int PositionOffsetMs { get; set; } = 0;
+
+    /// <summary>是否启用局域网协议服务（默认关闭）。</summary>
+    public bool LanEnabled { get; set; } = false;
+
+    /// <summary>局域网协议监听端口，默认 9000。</summary>
+    public int LanPort { get; set; } = LanProtocolOptions.DefaultPort;
+
+    /// <summary>监听范围："loopback"=仅本机；"all"=全网卡。默认 loopback。</summary>
+    public string LanScope { get; set; } = "loopback";
+
+    /// <summary>是否注册 <c>smtcplayer://</c> 自定义 URL 协议（默认开启）。</summary>
+    public bool UriSchemeEnabled { get; set; } = true;
 }

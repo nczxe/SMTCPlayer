@@ -1,4 +1,4 @@
-namespace SMTCPlayer.Core.Plugins;
+namespace SMTCPlayer.PluginSystem;
 
 /// <summary>插件描述信息（供宿主与设置界面使用）。</summary>
 public sealed class PluginInfo

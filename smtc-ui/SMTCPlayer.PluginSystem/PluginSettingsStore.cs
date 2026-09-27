@@ -1,7 +1,7 @@
 using System.Text.Json;
 using SMTCPlayer.PluginApi;
 
-namespace SMTCPlayer.Core.Plugins;
+namespace SMTCPlayer.PluginSystem;
 
 /// <summary>
 /// IPluginSettings 的隔离实现：每个插件独立存储于

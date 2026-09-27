@@ -51,3 +51,9 @@ archive/
 # Runtime logs (WinUI)
 stderr.log
 stdout.log
+
+# Build logs
+build-run.log
+
+# AI tooling
+.trae/

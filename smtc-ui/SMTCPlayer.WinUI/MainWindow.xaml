@@ -15,13 +15,6 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 隐藏的锚点：托盘右键菜单显示位置的占位 -->
-        <Border x:Name="TrayMenuAnchor"
-                Width="0" Height="0"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Visibility="Collapsed" />
-
         <!-- ============ 顶部自定义标题栏（Mica 透出） ============ -->
         <Grid x:Name="TitleBarGrid"
               Grid.Row="0"

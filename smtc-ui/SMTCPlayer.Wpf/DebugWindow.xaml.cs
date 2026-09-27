@@ -150,8 +150,9 @@ public partial class DebugWindow : Window
 
     private void OpenLogDir_Click(object sender, RoutedEventArgs e)
     {
-        var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
-        if (Directory.Exists(logDir))
+        // 日志目录已迁移至 %LocalAppData%\SMTCPlayer\logs，经 Logger.LogFilePath 推导
+        var logDir = Path.GetDirectoryName(Logger.LogFilePath) ?? "";
+        if (!string.IsNullOrEmpty(logDir) && Directory.Exists(logDir))
             Process.Start(new ProcessStartInfo(logDir) { UseShellExecute = true });
     }
 

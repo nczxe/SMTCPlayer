@@ -8,7 +8,8 @@ public sealed record UpdateInfo(
     string CurrentVersion,
     string LatestVersion,
     string ReleaseUrl,
-    string? ReleaseName);
+    string? ReleaseName,
+    IReadOnlyList<string>? ReleaseNotes = null);
 
 public enum UpdateCheckStatus
 {
@@ -25,6 +26,13 @@ public enum UpdateCheckStatus
 /// <summary>检查结果：状态 + 可读消息 + 新版本信息（仅 Status=UpdateAvailable 时非空）。</summary>
 public sealed record UpdateCheckResult(UpdateCheckStatus Status, string Message, UpdateInfo? Update);
 
+/// <summary>站点更新清单（由 CHANGELOG.md 同源生成的 update.json）。</summary>
+public sealed record UpdateManifest(
+    string LatestVersion,
+    string ReleaseDate,
+    string UpdateUrl,
+    IReadOnlyList<string> ReleaseNotes);
+
 /// <summary>
 /// 应用更新检查器：查询 GitHub Releases 的最新发布并与当前程序集版本比较。
 /// 仅做检查与提示，不下载、不自动更新；用户按提示自行前往发布页手动获取。
@@ -33,6 +41,9 @@ public sealed class UpdateChecker
 {
     /// <summary>项目发布页（检查到新版本时引导用户前往）。</summary>
     public const string ReleasesPageUrl = "https://github.com/nczxe/SMTCPlayer/releases";
+
+    /// <summary>站点更新日志页（Clean URL，与网页 og:url 一致）。</summary>
+    public const string UpdatePageUrl = "https://splay.asia/update";
 
     private const string LatestPageUrl = "https://github.com/nczxe/SMTCPlayer/releases/latest";
 
@@ -70,6 +81,19 @@ public sealed class UpdateChecker
     });
 
     private static (DateTime At, string Tag, string Name, string Url)? _cache;
+
+    /// <summary>站点更新清单：由 CHANGELOG.md 同源生成的 update.json，提供"更新了什么"（releaseNotes）。</summary>
+    private const string UpdateManifestUrl = "https://splay.asia/update.json";
+
+    /// <summary>站点清单客户端（需跟随重定向，故与探测客户端分开）。</summary>
+    private static readonly Lazy<HttpClient> _site = new(() =>
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"SMTCPlayer/{CurrentVersion}");
+        return client;
+    });
+
+    private static (DateTime At, string Version, IReadOnlyList<string> Notes)? _notesCache;
 
     /// <summary>当前应用版本（取入口 exe 程序集，失败回落 Core 自身）。</summary>
     public static string CurrentVersion
@@ -109,7 +133,8 @@ public sealed class UpdateChecker
 
             if (latestVer > currentVer)
             {
-                var info = new UpdateInfo(CurrentVersion, latest, release.Value.Url, release.Value.Name);
+                var notes = await FetchReleaseNotesAsync(latest, ct);
+                var info = new UpdateInfo(CurrentVersion, latest, release.Value.Url, release.Value.Name, notes);
                 WriteState(DateTime.UtcNow, info.LatestVersion); // 静默提醒同步去重
                 return new UpdateCheckResult(UpdateCheckStatus.UpdateAvailable,
                     $"发现新版本 v{info.LatestVersion}（当前 v{CurrentVersion}）。", info);
@@ -168,7 +193,8 @@ public sealed class UpdateChecker
                 return null; // 该版本已提醒过，不再重复打扰
             }
 
-            var info = new UpdateInfo(CurrentVersion, latest, release.Value.Url, release.Value.Name);
+            var info = new UpdateInfo(CurrentVersion, latest, release.Value.Url, release.Value.Name,
+                await FetchReleaseNotesAsync(latest, CancellationToken.None));
             Logger.Info($"发现新版本: v{latest}（当前 v{CurrentVersion}）→ {info.ReleaseUrl}");
 
             // 记录已提醒，下次启动不再弹
@@ -267,6 +293,73 @@ public sealed class UpdateChecker
         }
 
         return (tag, name ?? tag, string.IsNullOrWhiteSpace(url) ? ReleasesPageUrl : url!);
+    }
+
+    /// <summary>
+    /// 读取站点更新清单 update.json（由 CHANGELOG.md 同源生成），供"查看更新日志"展示。
+    /// 失败/超时返回 null，绝不抛出（不影响更新检查本身）。
+    /// </summary>
+    public async Task<UpdateManifest?> FetchManifestAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var resp = await _site.Value.GetAsync(UpdateManifestUrl, ct);
+            resp.EnsureSuccessStatusCode();
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var root = doc.RootElement;
+
+            var version = root.TryGetProperty("latestVersion", out var lv) ? lv.GetString() ?? "" : "";
+            var date = root.TryGetProperty("releaseDate", out var rd) ? rd.GetString() ?? "" : "";
+            var url = root.TryGetProperty("updateUrl", out var uu) ? uu.GetString() : null;
+
+            var notes = new List<string>();
+            if (root.TryGetProperty("releaseNotes", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                    {
+                        notes.Add(item.GetString()!);
+                    }
+                }
+            }
+
+            return new UpdateManifest(version, date,
+                string.IsNullOrWhiteSpace(url) ? UpdatePageUrl : url!, notes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug($"读取站点更新清单失败: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 读取站点 update.json 中与指定版本匹配的 releaseNotes（"更新了什么"）。
+    /// 站点清单由 CHANGELOG.md 同源生成；版本不匹配或请求失败时返回空数组，绝不影响更新检查本身。
+    /// </summary>
+    private async Task<IReadOnlyList<string>> FetchReleaseNotesAsync(string version, CancellationToken ct)
+    {
+        var cached = _notesCache;
+        if (cached != null && cached.Value.Version == version && DateTime.UtcNow - cached.Value.At < ProbeCacheTtl)
+        {
+            return cached.Value.Notes;
+        }
+
+        var manifest = await FetchManifestAsync(ct);
+        if (manifest == null ||
+            !string.Equals(NormalizeVersion(manifest.LatestVersion), version, StringComparison.Ordinal))
+        {
+            return Array.Empty<string>(); // 站点清单尚未同步到该版本 → 不展示过期说明
+        }
+
+        _notesCache = (DateTime.UtcNow, version, manifest.ReleaseNotes);
+        return manifest.ReleaseNotes;
     }
 
     private static string TagUrl(string tag) => $"{ReleasesPageUrl}/tag/{Uri.EscapeDataString(tag)}";

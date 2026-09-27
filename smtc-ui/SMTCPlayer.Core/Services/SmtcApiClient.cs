@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using SMTCPlayer.Core.Models;
-using SMTCPlayer.Core.Plugins;
 
 namespace SMTCPlayer.Core.Services;
 
@@ -115,40 +114,6 @@ public class SmtcApiClient : IDisposable
             return await GetJsonAsync<HealthStatus>("/api/health");
         }
         catch { return null; }
-    }
-
-    // ============== 插件任务桥（网页端 ↔ 宿主 ↔ 插件） ==============
-
-    /// <summary>取出待处理的插件调用任务（Flask 任务队列，宿主轮询）。</summary>
-    public async Task<List<PluginJob>?> GetPendingPluginJobsAsync()
-    {
-        try
-        {
-            return await GetJsonAsync<List<PluginJob>>("/api/plugin/jobs/next");
-        }
-        catch { return null; }
-    }
-
-    /// <summary>回传任务执行结果给 Flask（唤醒等待中的网页端长轮询）。</summary>
-    public async Task<bool> PostPluginJobResultAsync(string jobId, object result)
-    {
-        try
-        {
-            var resp = await PostJsonAsync<ApiResponse>($"/api/plugin/jobs/{jobId}/result", result);
-            return resp?.Success == true;
-        }
-        catch { return false; }
-    }
-
-    /// <summary>上报当前可用的搜索提供者列表（提供者集合变化时调用）。</summary>
-    public async Task<bool> ReportPluginProvidersAsync(object providers)
-    {
-        try
-        {
-            var resp = await PostJsonAsync<ApiResponse>("/api/plugin/providers", providers);
-            return resp?.Success == true;
-        }
-        catch { return false; }
     }
 
     private void ApplyCommonHeaders(HttpRequestMessage req)

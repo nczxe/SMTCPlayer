@@ -1,5 +1,9 @@
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using SMTCPlayer.Core.LanProtocol;
 using SMTCPlayer.Core.Services;
 
 namespace SMTCPlayer.WinUI;
@@ -12,6 +16,9 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private static Mutex? _instanceMutex;
     private static EventWaitHandle? _activateSignal;
+
+    /// <summary>单实例 URI 转发所用的命名管道名（本机）。</summary>
+    private const string UriPipeName = "SMTCPlayer.WinUI.UriPipe";
 
     public App()
     {
@@ -45,12 +52,18 @@ public partial class App : Application
         // 避免多套 服务端/监视器 子进程并存与托盘实例堆积
         const string MutexName = @"Local\SMTCPlayer.WinUI.Instance";
         const string EventName = @"Local\SMTCPlayer.WinUI.Activate";
+        var launchUri = ExtractLaunchUri();
         _instanceMutex = new Mutex(true, MutexName, out var createdNew);
         _activateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
         if (!createdNew)
         {
-            Logger.Info("检测到已有实例运行，激活其窗口后退出本次启动");
-            _activateSignal.Set();
+            // 第二实例：优先经命名管道把 URI 交给既有实例执行；失败再退回"置前窗口"信号
+            var forwarded = launchUri != null && TryForwardUriToExistingInstance(launchUri);
+            if (!forwarded)
+            {
+                Logger.Info("检测到已有实例运行，激活其窗口后退出本次启动");
+                _activateSignal.Set();
+            }
             Environment.Exit(0);
             return;
         }
@@ -62,6 +75,13 @@ public partial class App : Application
         _mainWindow = new MainWindow();
         MainWindowInstance = _mainWindow;
         _mainWindow.Activate();
+
+        // 接收后续实例经命名管道转发的 URI 命令
+        StartUriPipeServer();
+
+        // "应用未运行"路径：本次启动携带的 URI 命令在后端就绪后执行
+        if (launchUri != null)
+            HandleLaunchUri(launchUri);
 
         // 后台监听"激活"信号：把已有实例从托盘唤起
         var signalThread = new Thread(() =>
@@ -77,6 +97,85 @@ public partial class App : Application
         })
         { IsBackground = true, Name = "single-instance-activate" };
         signalThread.Start();
+    }
+
+    /// <summary>从命令行参数中提取 <c>smtcplayer://</c> URI（协议唤起时由系统作为参数传入）。</summary>
+    private static string? ExtractLaunchUri()
+    {
+        var prefix = UriSchemeRegistrar.SchemeName + ":";
+        foreach (var arg in Environment.GetCommandLineArgs())
+        {
+            if (string.IsNullOrEmpty(arg)) continue;
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return arg;
+        }
+        return null;
+    }
+
+    /// <summary>把 URI 转发给既有实例（命名管道，带重试以等待对方管道就绪）。</summary>
+    private static bool TryForwardUriToExistingInstance(string uri)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            try
+            {
+                using var client = new NamedPipeClientStream(".", UriPipeName, PipeDirection.Out);
+                client.Connect(500);
+                using var writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true };
+                writer.WriteLine(uri);
+                Logger.Info("已通过命名管道把 URI 转发给既有实例");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    Logger.Warn($"转发 URI 到既有实例失败，改走激活信号: {ex.Message}");
+                    return false;
+                }
+                Thread.Sleep(100);
+            }
+        }
+    }
+
+    /// <summary>启动命名管道监听循环，接收后续实例转发的 URI。</summary>
+    private void StartUriPipeServer()
+    {
+        var thread = new Thread(UriPipeLoop) { IsBackground = true, Name = "uri-pipe-server" };
+        thread.Start();
+    }
+
+    private void UriPipeLoop()
+    {
+        while (true)
+        {
+            try
+            {
+                using var server = new NamedPipeServerStream(
+                    UriPipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.None);
+                server.WaitForConnection();
+
+                using var reader = new StreamReader(server, Encoding.UTF8);
+                var uri = reader.ReadLine();
+                if (!string.IsNullOrWhiteSpace(uri))
+                {
+                    var captured = uri!;
+                    Dispatcher.TryEnqueue(() => HandleLaunchUri(captured));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"URI 管道监听异常: {ex.Message}");
+                Thread.Sleep(500);
+            }
+        }
+    }
+
+    /// <summary>把 URI 交给主窗口的处理器（须在 UI 线程调用）。</summary>
+    private static void HandleLaunchUri(string uri)
+    {
+        try { MainWindowInstance?.EnqueueUri(uri); }
+        catch (Exception ex) { Logger.Warn($"处理 URI 命令失败: {ex.Message}"); }
     }
 
     private static void OnWinUIUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)

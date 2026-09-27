@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -43,6 +43,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SMTCPlayer.Core\SMTCPlayer.Core.csproj" />
+    <!-- UI 层直接使用 PluginSystem / Logging 类型，显式引用（不依赖 Core 传递引用） -->
+    <ProjectReference Include="..\SMTCPlayer.Logging\SMTCPlayer.Logging.csproj" />
+    <ProjectReference Include="..\SMTCPlayer.PluginSystem\SMTCPlayer.PluginSystem.csproj" />
     <!-- 仅保证构建顺序：先编译插件项目并部署到 ..\plugins\（分发目录），再由下方 Content 复制进输出目录 -->
     <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.NeteaseEnhance\SMTCPlayer.Plugins.NeteaseEnhance.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\plugins\SMTCPlayer.Plugins.SpotifySupport\SMTCPlayer.Plugins.SpotifySupport.csproj" ReferenceOutputAssembly="false" />
@@ -53,7 +56,7 @@
     <Content Include="..\..\server\**\*"
              Exclude="..\..\server\config.json;..\..\server\**\__pycache__\**;..\..\server\**\*.pyc"
              CopyToOutputDirectory="PreserveNewest" Link="server\%(RecursiveDir)%(Filename)%(Extension)" />
-    <!-- 插件分发目录 → 输出目录 plugins\（PluginHost 启动时扫描 BaseDirectory\plugins） -->
+    <!-- 插件分发目录 → 输出目录 plugins\（PluginManager 启动时扫描 BaseDirectory\plugins） -->
     <Content Include="..\plugins\**\*"
              CopyToOutputDirectory="PreserveNewest" Link="plugins\%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- 内置无头 Python 服务端（PyInstaller 产物，build.bat 先行构建；缺失时回落系统 Python） -->

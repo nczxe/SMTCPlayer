@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 独立插件管理窗口：安装(.zip)/卸载/启停/重扫。
+     仅消费 PluginSystem 公开 API（PluginManager/PluginInstaller/PluginInfo），
+     单例持有与生命周期由 MainWindow 负责。 -->
+<Window
+    x:Class="SMTCPlayer.WinUI.PluginManagerWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶部工具栏：操作按钮 + 操作结果/错误反馈文本 -->
+        <Grid Grid.Row="0" Padding="16,12,16,10" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="InstallButton"
+                        Click="InstallButton_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinHeight="36"
+                        Padding="12,0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE896;" FontSize="14" />
+                        <TextBlock Text="安装插件(.zip)" FontSize="12" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="RescanButton"
+                        Click="RescanButton_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinHeight="36"
+                        Padding="12,0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                        <TextBlock Text="重新扫描" FontSize="12" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="OpenFolderButton"
+                        Click="OpenFolderButton_Click"
+                        CornerRadius="{ThemeResource CornerRadiusMedium}"
+                        MinHeight="36"
+                        Padding="12,0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE8B7;" FontSize="14" />
+                        <TextBlock Text="打开插件目录" FontSize="12" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <TextBlock x:Name="StatusText"
+                       Grid.Column="1"
+                       Text=""
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="WrapWholeWords"
+                       VerticalAlignment="Center" />
+        </Grid>
+
+        <Border Grid.Row="1" Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+        <!-- 插件卡片列表（卡片由代码构建，样式沿用设置页原视觉） -->
+        <ListView x:Name="PluginList"
+                  Grid.Row="2"
+                  SelectionMode="None"
+                  Padding="16,8,16,16">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="MinHeight" Value="0" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
+        </ListView>
+    </Grid>
+</Window>

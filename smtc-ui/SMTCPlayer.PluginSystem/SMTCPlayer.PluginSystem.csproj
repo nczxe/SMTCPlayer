@@ -4,16 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- 插件系统仅依赖契约（PluginApi）与日志（Logging），禁止引用 Core 或任何 UI 框架 -->
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="QRCoder" Version="1.6.0" />
-  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SMTCPlayer.PluginApi\SMTCPlayer.PluginApi.csproj" />
     <ProjectReference Include="..\SMTCPlayer.Logging\SMTCPlayer.Logging.csproj" />
-    <ProjectReference Include="..\SMTCPlayer.PluginSystem\SMTCPlayer.PluginSystem.csproj" />
   </ItemGroup>
 
 </Project>

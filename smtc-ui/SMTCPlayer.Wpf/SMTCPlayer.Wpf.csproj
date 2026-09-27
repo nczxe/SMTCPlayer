@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -29,7 +29,7 @@
     <Content Include="..\..\server\**\*"
              Exclude="..\..\server\config.json;..\..\server\**\__pycache__\**;..\..\server\**\*.pyc"
              CopyToOutputDirectory="PreserveNewest" Link="server\%(RecursiveDir)%(Filename)%(Extension)" />
-    <!-- 插件分发目录 → 输出目录 plugins\（PluginHost 启动时扫描 BaseDirectory\plugins） -->
+    <!-- 插件分发目录 → 输出目录 plugins\（PluginManager 启动时扫描 BaseDirectory\plugins） -->
     <Content Include="..\plugins\**\*"
              CopyToOutputDirectory="PreserveNewest" Link="plugins\%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- 内置无头 Python 服务端（PyInstaller 产物，build.bat 先行构建；缺失时回落系统 Python） -->

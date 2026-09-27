@@ -110,6 +110,16 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                TextWrapping="WrapWholeWords" />
+                    <Button Click="OpenLogViewerButton_Click"
+                            CornerRadius="{ThemeResource CornerRadiusMedium}"
+                            MinHeight="36"
+                            HorizontalAlignment="Left"
+                            Padding="16,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE9D9;" FontSize="12" />
+                            <TextBlock Text="打开日志查看器" FontSize="12" />
+                        </StackPanel>
+                    </Button>
                     <HyperlinkButton Content="打开日志文件夹"
                                      Click="OpenLogFolder_Click"
                                      FontSize="12"
@@ -147,28 +157,71 @@
 
                 <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
 
+                <!-- ============ 局域网与外部协议 ============ -->
+                <StackPanel Spacing="8">
+                    <TextBlock Text="局域网与外部协议"
+                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBlock Text="开启后，本机应用可通过 TCP 连接（逐行 NDJSON）与本应用通信：连接后首条消息须为鉴权，随后可发送播放控制指令并订阅播放状态推送。默认仅本机（127.0.0.1）可连。"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="WrapWholeWords" />
+                    <ToggleSwitch x:Name="LanEnabledToggle"
+                                  Header="启用局域网协议"
+                                  OnContent="开启"
+                                  OffContent="关闭"
+                                  Margin="0,4,0,0"
+                                  Toggled="LanEnabledToggle_Toggled" />
+                    <NumberBox x:Name="LanPortBox"
+                               Header="监听端口（1024-65535）"
+                               Minimum="1024"
+                               Maximum="65535"
+                               SmallChange="1"
+                               SpinButtonPlacementMode="Compact"
+                               ValueChanged="LanPortBox_ValueChanged" />
+                    <RadioButtons x:Name="LanScopeSelector"
+                                  Header="监听范围"
+                                  SelectionChanged="LanScopeSelector_SelectionChanged">
+                        <RadioButton Content="仅本机（127.0.0.1）" />
+                        <RadioButton Content="局域网（0.0.0.0）" />
+                    </RadioButtons>
+                    <ToggleSwitch x:Name="UriSchemeToggle"
+                                  Header="注册 smtcplayer:// 协议"
+                                  OnContent="开启"
+                                  OffContent="关闭"
+                                  Margin="0,8,0,0"
+                                  Toggled="UriSchemeToggle_Toggled" />
+                    <TextBlock Text="允许外部程序通过 smtcplayer:// 唤起本应用（如 smtcplayer://next、smtcplayer://volume?value=50）。无需管理员权限，仅写入当前用户注册表。"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="WrapWholeWords" />
+                </StackPanel>
+
+                <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
                 <!-- ============ 插件 ============ -->
                 <StackPanel Spacing="8">
                     <TextBlock Text="插件"
                                Style="{StaticResource SubtitleTextBlockStyle}" />
-                    <TextBlock x:Name="PluginHintText"
-                               Text="插件在后台接收播放事件。将插件文件夹放入 plugins 目录后点击「重新扫描」即可加载，无需重启应用。"
+                    <Button Click="PluginManagerButton_Click"
+                            CornerRadius="{ThemeResource CornerRadiusMedium}"
+                            MinHeight="40"
+                            HorizontalAlignment="Left"
+                            MinWidth="200"
+                            Padding="16,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE912;" FontSize="14" />
+                            <TextBlock Text="插件管理"
+                                       Style="{StaticResource BodyTextBlockStyle}" />
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="管理已安装的插件（安装/卸载/启停）"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                TextWrapping="WrapWholeWords" />
-                    <StackPanel x:Name="PluginListPanel" Spacing="8" />
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                        <Button Content="重新扫描"
-                                Click="RescanPlugins_Click"
-                                CornerRadius="{ThemeResource CornerRadiusMedium}"
-                                MinHeight="36"
-                                Padding="16,0" />
-                        <Button Content="打开插件文件夹"
-                                Click="OpenPluginsFolder_Click"
-                                CornerRadius="{ThemeResource CornerRadiusMedium}"
-                                MinHeight="36"
-                                Padding="16,0" />
-                    </StackPanel>
+                    <TextBlock x:Name="PluginCountText"
+                               Text="共 0 个插件"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
 
                 <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
@@ -185,10 +238,20 @@
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                TextWrapping="WrapWholeWords" />
+                    <TextBlock x:Name="UpdateNotesText"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               TextWrapping="WrapWholeWords"
+                               Visibility="Collapsed" />
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button x:Name="CheckUpdateButton"
                                 Content="检查更新"
                                 Click="CheckUpdate_Click"
+                                CornerRadius="{ThemeResource CornerRadiusMedium}"
+                                MinHeight="36"
+                                Padding="16,0" />
+                        <Button x:Name="ViewChangelogButton"
+                                Content="查看更新日志"
+                                Click="ViewChangelog_Click"
                                 CornerRadius="{ThemeResource CornerRadiusMedium}"
                                 MinHeight="36"
                                 Padding="16,0" />

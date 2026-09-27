@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SMTCPlayer.Core.Plugins;
+namespace SMTCPlayer.PluginSystem;
 
 /// <summary>plugin.json 清单模型（每个插件目录一份）。</summary>
 internal sealed class PluginManifest

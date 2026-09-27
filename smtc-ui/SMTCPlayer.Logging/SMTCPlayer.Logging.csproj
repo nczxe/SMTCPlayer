@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 日志引擎保持零项目依赖：可被 Core / PluginSystem / UI 等任意层引用 -->
+  </PropertyGroup>
+
+</Project>

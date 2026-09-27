@@ -1,10 +1,10 @@
 using System.Text.Json.Serialization;
 using SMTCPlayer.PluginApi;
 
-namespace SMTCPlayer.Core.Plugins;
+namespace SMTCPlayer.PluginSystem;
 
-/// <summary>Flask 任务队列下发给宿主的插件调用任务（网页端发起的搜索/播放）。</summary>
-public sealed class PluginJob
+/// <summary>后端任务队列下发给宿主的插件调用任务（网页端发起的搜索/播放）。</summary>
+internal sealed class PluginJob
 {
     [JsonPropertyName("id")]
     public string Id { get; set; } = "";

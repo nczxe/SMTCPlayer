@@ -5,6 +5,7 @@ using SMTCPlayer.Core.Models;
 using SMTCPlayer.Core.Plugins;
 using SMTCPlayer.Core.Services;
 using SMTCPlayer.PluginApi;
+using SMTCPlayer.PluginSystem;
 
 namespace SMTCPlayer.Core.ViewModels;
 
@@ -46,8 +47,8 @@ public class MainViewModel : INotifyPropertyChanged
         _port = port > 0 ? port : 8888;
 
         // 插件宿主：SMTC 变化 → 轮询 diff → 广播事件 → 所有插件
-        PluginHost = new PluginHost(api);
-        _ = PluginHost.InitializeAsync();
+        PluginManager = new PluginManager(api.BaseUrl);
+        _ = PluginManager.InitializeAsync();
 
         // 启动静默检查更新（24 小时节流；只检查提示，不自动下载安装）
         _ = RaiseStartupUpdateIfAnyAsync();
@@ -138,7 +139,7 @@ public class MainViewModel : INotifyPropertyChanged
         IsServerRunning = false;
         LanUrl = "";
         StatusText = "服务已停止";
-        PluginHost.PublishServerState(false);
+        PluginManager.PublishServerState(false);
     }
 
     public int Port
@@ -203,7 +204,7 @@ public class MainViewModel : INotifyPropertyChanged
     public double PositionOffsetSeconds { get; set; }
 
     /// <summary>插件宿主（供 UI 层读取插件列表 / 切换启用状态）。</summary>
-    public PluginHost PluginHost { get; }
+    public PluginManager PluginManager { get; }
 
     /// <summary>启动静默检查发现新版本时触发（已 marshal 到创建 ViewModel 的线程）。</summary>
     public event Action<UpdateInfo>? UpdateAvailable;
@@ -347,14 +348,14 @@ public class MainViewModel : INotifyPropertyChanged
             _pluginJobTimer = new System.Timers.Timer(400);
             _pluginJobTimer.Elapsed += (_, _) =>
             {
-                try { PluginHost.PollServerJobsAsync().GetAwaiter().GetResult(); }
+                try { PluginManager.PollServerJobsAsync().GetAwaiter().GetResult(); }
                 catch { /* 桥接异常忽略，下轮重试 */ }
             };
             _pluginJobTimer.Start();
 
             _ = PollStatusAsync();
             _ = PollHealthAsync();
-            PluginHost.PublishServerState(true);
+            PluginManager.PublishServerState(true);
         }
         catch (InvalidOperationException ex)
         {
@@ -408,7 +409,7 @@ public class MainViewModel : INotifyPropertyChanged
         try
         {
             // 上报插件聚合能力（插件启停后 1 秒内随轮询生效；"none" 表示显式清空）
-            var caps = PluginHost.GetActiveCapabilities();
+            var caps = PluginManager.GetActiveCapabilities();
             _api.CapabilitiesHeader = caps.Count > 0 ? string.Join(",", caps) : "none";
 
             var status = await _api.GetStatusAsync();
@@ -467,11 +468,11 @@ public class MainViewModel : INotifyPropertyChanged
 
                 // 插件广播：投影为快照 → diff 出变化事件 → 广播给所有插件
                 var snapshot = PluginEventDispatcher.ToSnapshot(status);
-                PluginHost.UpdateSnapshot(snapshot);
+                PluginManager.UpdateSnapshot(snapshot);
                 var events = PluginEventDispatcher.Diff(_lastSnapshot, snapshot);
                 if (events.Count > 0)
                 {
-                    PluginHost.Publish(events);
+                    PluginManager.Publish(events);
                 }
                 _lastSnapshot = snapshot;
             }
@@ -499,7 +500,7 @@ public class MainViewModel : INotifyPropertyChanged
             StatusText = "服务器已断开";
             IsServerRunning = false;
             StopPolling();
-            PluginHost.PublishServerState(false);
+            PluginManager.PublishServerState(false);
         }
     }
 
@@ -545,7 +546,7 @@ public class MainViewModel : INotifyPropertyChanged
     {
         try
         {
-            PluginHost.ShutdownAsync().GetAwaiter().GetResult();
+            PluginManager.ShutdownAsync().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -558,7 +559,7 @@ public class MainViewModel : INotifyPropertyChanged
     {
         try
         {
-            await PluginHost.ShutdownAsync();
+            await PluginManager.ShutdownAsync();
         }
         catch (Exception ex)
         {

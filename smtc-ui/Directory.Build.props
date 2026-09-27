@@ -1,13 +1,13 @@
-﻿<Project>
+<Project>
   <!-- 应用版本唯一来源（Single Source of Truth）：
        - smtc-ui 下所有项目自动继承此 Version（含 Core / PluginApi / Wpf / WinUI）
        - Inno Setup 安装包由 build.bat 从本文件解析后经 /DMyAppVersion= 传入，
          setup*.iss 内仅保留兜底默认值
        发版时只改这一处。 -->
   <PropertyGroup>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <!-- 构建号（人工记录）：格式 YYMMDDHHMMS，随发版更新 -->
-    <InformationalVersion>1.1.1+26082323500S</InformationalVersion>
+    <InformationalVersion>1.2.0+20260927012330A</InformationalVersion>
 
     <!-- 文件属性（exe 详细信息） -->
     <Company>FR-NEXT</Company>

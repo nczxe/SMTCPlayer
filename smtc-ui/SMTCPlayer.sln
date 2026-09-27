@@ -5,7 +5,11 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SMTCPlayer.Core", "SMTCPlayer.Core\SMTCPlayer.Core.csproj", "{A1B2C3D4-1111-4000-8000-000000000001}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SMTCPlayer.Logging", "SMTCPlayer.Logging\SMTCPlayer.Logging.csproj", "{A1B2C3D4-4444-4000-8000-000000000004}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SMTCPlayer.PluginApi", "SMTCPlayer.PluginApi\SMTCPlayer.PluginApi.csproj", "{A1B2C3D4-3333-4000-8000-000000000003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SMTCPlayer.PluginSystem", "SMTCPlayer.PluginSystem\SMTCPlayer.PluginSystem.csproj", "{A1B2C3D4-8888-4000-8000-000000000008}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SMTCPlayer.Plugins.NeteaseEnhance", "..\plugins\SMTCPlayer.Plugins.NeteaseEnhance\SMTCPlayer.Plugins.NeteaseEnhance.csproj", "{A1B2C3D4-6666-4000-8000-000000000006}"
 EndProject
@@ -25,10 +29,18 @@ Global
 		{A1B2C3D4-1111-4000-8000-000000000001}.Debug|x64.Build.0 = Debug|x64
 		{A1B2C3D4-1111-4000-8000-000000000001}.Release|x64.ActiveCfg = Release|x64
 		{A1B2C3D4-1111-4000-8000-000000000001}.Release|x64.Build.0 = Release|x64
+		{A1B2C3D4-4444-4000-8000-000000000004}.Debug|x64.ActiveCfg = Debug|x64
+		{A1B2C3D4-4444-4000-8000-000000000004}.Debug|x64.Build.0 = Debug|x64
+		{A1B2C3D4-4444-4000-8000-000000000004}.Release|x64.ActiveCfg = Release|x64
+		{A1B2C3D4-4444-4000-8000-000000000004}.Release|x64.Build.0 = Release|x64
 		{A1B2C3D4-3333-4000-8000-000000000003}.Debug|x64.ActiveCfg = Debug|x64
 		{A1B2C3D4-3333-4000-8000-000000000003}.Debug|x64.Build.0 = Debug|x64
 		{A1B2C3D4-3333-4000-8000-000000000003}.Release|x64.ActiveCfg = Release|x64
 		{A1B2C3D4-3333-4000-8000-000000000003}.Release|x64.Build.0 = Release|x64
+		{A1B2C3D4-8888-4000-8000-000000000008}.Debug|x64.ActiveCfg = Debug|x64
+		{A1B2C3D4-8888-4000-8000-000000000008}.Debug|x64.Build.0 = Debug|x64
+		{A1B2C3D4-8888-4000-8000-000000000008}.Release|x64.ActiveCfg = Release|x64
+		{A1B2C3D4-8888-4000-8000-000000000008}.Release|x64.Build.0 = Release|x64
 		{A1B2C3D4-6666-4000-8000-000000000006}.Debug|x64.ActiveCfg = Debug|x64
 		{A1B2C3D4-6666-4000-8000-000000000006}.Debug|x64.Build.0 = Debug|x64
 		{A1B2C3D4-6666-4000-8000-000000000006}.Release|x64.ActiveCfg = Release|x64

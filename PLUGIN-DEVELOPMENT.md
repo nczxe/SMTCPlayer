@@ -36,6 +36,15 @@ SMTC Player 插件系统基于 .NET AssemblyLoadContext 实现，具有以下特
 SMTC 变化 → MainViewModel 轮询 → diff 生成 PluginEvent → 有界 Channel → 后台顺序分发 → 所有插件
 ```
 
+### 隔离边界
+
+为保证插件系统与宿主核心彻底解耦，请遵守以下边界：
+
+- **仅引用契约程序集**：插件项目只允许引用 `SMTCPlayer.PluginApi`（零依赖契约程序集），不得引用宿主程序集（Core / WinUI / WPF 等）。
+- **单一 Assembly 身份**：`SMTCPlayer.PluginApi` 必须保持单一程序集，宿主与所有插件共享同一份类型身份，不得拆分或复制。
+- **插件系统不反向依赖宿主**：`SMTCPlayer.PluginSystem` 自身不引用 Core / WinUI / WPF，宿主统一通过 `PluginManager` 这一 facade 使用插件能力。
+- **违规即加载失败**：尝试引用宿主程序集的插件会在加载阶段失败，并在插件列表中给出可读的错误信息，不会被静默忽略。
+
 ---
 
 ## 开发环境准备
@@ -444,13 +453,31 @@ _ctx.Log.Error("错误信息");
 _ctx.Log.Error("错误信息", exception);
 ```
 
-### 日志输出示例
+### 日志输出格式
+
+每条日志统一为「毫秒时间戳 + 级别 + 分类」，插件分类固定为 `Plugin:<插件 Id>`：
 
 ```
-[2026-08-23 14:30:25] [INFO] [my-plugin] 插件已加载
-[2026-08-23 14:30:26] [DEBUG] [my-plugin] 检查间隔: 60s
-[2026-08-23 14:30:30] [WARN] [my-plugin] 网络连接超时
+[2026-08-23 14:30:25.123] [Info] [Plugin:my-plugin] 插件已加载
+[2026-08-23 14:30:26.045] [Debug] [Plugin:my-plugin] 检查间隔: 60s
+[2026-08-23 14:30:30.900] [Warn] [Plugin:my-plugin] 网络连接超时
 ```
+
+### 日志文件与路由
+
+- 插件日志写入独立文件：`%LocalAppData%\SMTCPlayer\logs\plugins\<插件 Id>.log`
+- 插件的 `Warn` / `Error` 会同时镜像进主日志 `logs\smtc-yyyyMMdd.log`，便于快速定位问题
+- 插件单文件达到 1MB 自动分卷（`<插件 Id>.partN.log`）；主日志单文件达到 2MB 分卷
+- 写入为异步缓冲（有界通道 4096 + 单后台写线程，另有 2000 条内存环形缓冲供内置查看器读取），不阻塞插件业务线程
+
+### 内置保护策略
+
+插件无需自行轮转或清理日志，宿主会自动控制体积与噪声：
+
+- **总量上限 50MB**：整个 `logs` 目录（含 `plugins` 子目录）超过上限时，按时间从旧到新清理
+- **保留 7 天**：超过 7 天的日志文件自动删除
+- **重复抑制**：10 秒窗口内相同的 `(分类, 级别, 消息)` 只记录第一条，窗口结束时汇总为 `... (重复 N 次)`
+- **Debug 限流**：每分类每分钟最多记录 120 条 `Debug`，超出的丢弃并在结算时汇总为一条 Warn
 
 ---
 
@@ -509,6 +536,41 @@ mkdir -p smtc-ui/plugins/my-plugin
 cp plugins/MyPlugin/bin/Release/net10.0/* smtc-ui/plugins/my-plugin/
 cp plugins/MyPlugin/plugin.json smtc-ui/plugins/my-plugin/
 ```
+
+### 通过安装包（zip）安装
+
+除手动放置目录外，宿主内置了 zip 安装包安装器（`PluginInstaller`），推荐通过它分发插件。
+
+**安装包结构**：zip 根目录直接包含 `plugin.json` 与插件程序集，或只包含唯一一个含 `plugin.json` 的子目录。
+
+```
+my-plugin-1.2.0.zip
+└── plugin.json / MyPlugin.dll / 其他依赖文件...
+```
+
+**安装校验**：
+
+- 校验通过前只在暂存区解压，绝不触碰已安装版本
+- 解压时拒绝绝对路径、盘符与 `..` 穿越条目，跳过 `__MACOSX` / `.DS_Store` 等打包垃圾
+- 校验 `plugin.json` 必填字段（`id` / `assembly` / `entryType`）、`id` 目录名合法性与程序集存在性
+- 校验 `apiVersion` / `minHostVersion` 与当前应用是否兼容
+- 同 `id` 已存在相同版本时默认不覆盖（返回 `IdConflict`），需用户确认后再以覆盖方式重试
+- 内置插件（随应用发布的 `plugins\` 目录）不可被覆盖或卸载，仅可禁用
+
+**升级与回滚**：升级时旧版本先备份到维护目录，新版本落位并热激活；若激活失败，会自动把旧版本复位并重新上线（`RolledBack = true`），确保升级失败不会导致旧版本静默丢失。
+
+**结果状态**（`PluginInstallStatus`）：`Installed` / `Upgraded` / `Overwritten` / `InvalidPackage` / `Incompatible` / `IdConflict` / `Failed`。
+
+**维护目录**（与插件目录同卷以便原子改名，且刻意位于扫描根之外，不会被误识别为插件）：
+
+```
+%LocalAppData%\SMTCPlayer\plugin-maintenance\
+├── staging\<guid>\        # 解压暂存（校验通过前不动正式目录）
+├── backup\<id>\<时间戳>\    # 升级备份（每 Id 仅保留最近 1 份）
+└── trash\<id>\<时间戳>\     # 卸载/坏版本回收
+```
+
+**卸载**：`UninstallAsync(id, removeData)` 会把插件目录移入回收站并删除。`removeData=false`（默认）保留 `plugins-data\<id>` 与启用状态，便于重装恢复；`removeData=true` 则一并清除插件数据与禁用记录。
 
 ---
 
@@ -676,6 +738,8 @@ var response = await _http.GetAsync($"{_ctx.ServerUrl}/api/status");
 - 运行时启用/禁用插件
 - 动态加载新插件
 - 卸载后重新加载更新版本
+
+也可通过 zip 安装包完成在线安装/升级/卸载：安装器会先备份旧版本再落位新版本并热激活，激活失败自动回滚到旧版本（详见 [构建与部署](#构建与部署)）。
 
 ### Q: 如何处理长时间运行的任务？
 

@@ -1,7 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using SMTCPlayer.Core.Plugins;
 using SMTCPlayer.Core.Services;
+using SMTCPlayer.PluginSystem;
 using SMTCPlayer.WinUI.Services;
 using System.Diagnostics;
 
@@ -37,7 +37,32 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>用户请求校准歌曲进度偏移。</summary>
     public event Action? PositionOffsetRequested;
 
-    private PluginHost? _pluginHost;
+    /// <summary>用户请求打开插件管理窗口。</summary>
+    public event Action? PluginManagerRequested;
+
+    /// <summary>用户请求打开日志查看器。</summary>
+    public event Action? LogViewerRequested;
+
+    /// <summary>是否启用局域网协议服务。</summary>
+    public bool LanEnabled { get; private set; }
+
+    /// <summary>局域网协议监听端口。</summary>
+    public int LanPort { get; private set; } = 9000;
+
+    /// <summary>监听范围："loopback"=仅本机；"all"=全网卡。</summary>
+    public string LanScope { get; private set; } = "loopback";
+
+    /// <summary>是否注册 smtcplayer:// 自定义 URL 协议。</summary>
+    public bool UriSchemeEnabled { get; private set; } = true;
+
+    /// <summary>局域网协议配置变化（宿主应重启服务以生效）。</summary>
+    public event Action? LanSettingsChanged;
+
+    /// <summary>URI 协议注册开关变化（宿主应注册/注销协议）。</summary>
+    public event Action? UriSchemeSettingChanged;
+
+    private PluginManager? _pluginManager;
+    private bool _loadingLan;
 
     public SettingsPanel()
     {
@@ -45,9 +70,9 @@ public sealed partial class SettingsPanel : UserControl
     }
 
     /// <summary>每次打开面板时由宿主调用：注入状态与插件宿主。</summary>
-    public void LoadState(ElementTheme currentTheme, PluginHost? pluginHost)
+    public void LoadState(ElementTheme currentTheme, PluginManager? pluginManager)
     {
-        _pluginHost = pluginHost;
+        _pluginManager = pluginManager;
         SelectedTheme = currentTheme;
         IsDebugMode = AppSettings.GetDebugMode();
 
@@ -78,145 +103,21 @@ public sealed partial class SettingsPanel : UserControl
         UpdateStatusText.Text = $"当前版本 v{UpdateChecker.CurrentVersion}";
         UpdatePositionOffsetText(AppSettings.GetPositionOffsetMs());
 
-        PluginListPanel.Children.Clear();
-        BuildPluginList();
-    }
+        PluginCountText.Text = _pluginManager != null
+            ? $"共 {_pluginManager.Plugins.Count} 个插件"
+            : "共 0 个插件";
 
-    // ============== 插件列表（纯 C# 构建） ==============
-
-    private void BuildPluginList()
-    {
-        if (_pluginHost == null) return;
-
-        var plugins = _pluginHost.Plugins;
-        if (plugins.Count == 0)
-        {
-            var empty = new TextBlock
-            {
-                Text = "未发现插件。将插件文件夹（含 plugin.json）放入 plugins 目录即可自动加载。",
-                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-                TextWrapping = TextWrapping.Wrap,
-                Opacity = 0.7,
-            };
-            PluginListPanel.Children.Add(empty);
-            return;
-        }
-
-        foreach (var plugin in plugins)
-        {
-            PluginListPanel.Children.Add(BuildPluginItem(plugin));
-        }
-    }
-
-    private Border BuildPluginItem(PluginInfo plugin)
-    {
-        var header = string.IsNullOrEmpty(plugin.Version)
-            ? plugin.Name
-            : $"{plugin.Name}  v{plugin.Version}";
-
-        var titlePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        titlePanel.Children.Add(new TextBlock
-        {
-            Text = header,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-        });
-        if (!string.IsNullOrEmpty(plugin.Author))
-        {
-            titlePanel.Children.Add(new TextBlock
-            {
-                Text = $"by {plugin.Author}",
-                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-                Opacity = 0.7,
-                VerticalAlignment = VerticalAlignment.Bottom,
-            });
-        }
-
-        var item = new StackPanel { Spacing = 4 };
-        item.Children.Add(titlePanel);
-        item.Children.Add(new TextBlock
-        {
-            Text = plugin.Error != null ? $"加载失败: {plugin.Error}" : plugin.Description,
-            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-            Opacity = plugin.Error != null ? 0.9 : 0.7,
-            TextWrapping = TextWrapping.Wrap,
-        });
-
-        var toggle = new ToggleSwitch
-        {
-            IsOn = plugin.IsEnabled,
-            OnContent = "启用",
-            OffContent = "停用",
-            MinWidth = 120,
-            Tag = plugin.Id,
-        };
-        toggle.Toggled += PluginToggle_Toggled;
-
-        var row = new Grid { ColumnSpacing = 16 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(item, 0);
-        Grid.SetColumn(toggle, 1);
-        row.Children.Add(item);
-        row.Children.Add(toggle);
-
-        return new Border
-        {
-            Child = row,
-            Padding = new Thickness(12, 10, 12, 10),
-            CornerRadius = new CornerRadius(8),
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
-            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-            BorderThickness = new Thickness(1),
-        };
-    }
-
-    private async void PluginToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_pluginHost == null || sender is not ToggleSwitch toggle) return;
-        if (toggle.Tag is not string pluginId) return;
-
-        try
-        {
-            await _pluginHost.SetPluginEnabledAsync(pluginId, toggle.IsOn);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"切换插件状态失败 {pluginId}: {ex.Message}");
-        }
-    }
-
-    private async void RescanPlugins_Click(object sender, RoutedEventArgs e)
-    {
-        if (_pluginHost == null) return;
-
-        try
-        {
-            var added = await _pluginHost.RescanAsync();
-            PluginListPanel.Children.Clear();
-            BuildPluginList();
-            PluginHintText.Text = added > 0
-                ? $"扫描完成：新加载 {added} 个插件。"
-                : "扫描完成：没有发现新插件。";
-            Logger.Info($"设置页手动重扫插件: 新增 {added} 个");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"重新扫描插件失败: {ex.Message}");
-            PluginHintText.Text = $"扫描失败: {ex.Message}";
-        }
-    }
-
-    private void OpenPluginsFolder_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Directory.CreateDirectory(PluginHost.UserPluginsRoot);
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{PluginHost.UserPluginsRoot}\"") { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"打开插件文件夹失败: {ex.Message}");
-        }
+        _loadingLan = true;
+        LanEnabled = AppSettings.GetLanEnabled();
+        LanPort = AppSettings.GetLanPort();
+        LanScope = AppSettings.GetLanScope();
+        LanEnabledToggle.IsOn = LanEnabled;
+        LanPortBox.Value = LanPort;
+        LanScopeSelector.SelectedIndex = LanScope == "all" ? 1 : 0;
+        UriSchemeEnabled = AppSettings.GetUriSchemeEnabled();
+        UriSchemeToggle.IsOn = UriSchemeEnabled;
+        UpdateLanControlsEnabled();
+        _loadingLan = false;
     }
 
     // ============== 外观 / 行为 ==============
@@ -260,6 +161,58 @@ public sealed partial class SettingsPanel : UserControl
         Logger.Info($"调试模式已{(IsDebugMode ? "开启" : "关闭")}");
     }
 
+    // ============== 局域网与外部协议 ==============
+
+    private void LanEnabledToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (LanEnabledToggle is null || _loadingLan) return;
+        LanEnabled = LanEnabledToggle.IsOn;
+        AppSettings.SetLanEnabled(LanEnabled);
+        UpdateLanControlsEnabled();
+        Logger.Info($"局域网协议服务已{(LanEnabled ? "开启" : "关闭")}");
+        LanSettingsChanged?.Invoke();
+    }
+
+    private void LanPortBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (LanPortBox is null || _loadingLan) return;
+        if (double.IsNaN(args.NewValue)) return;
+        var port = (int)args.NewValue;
+        if (port < 1024 || port > 65535) return;
+        if (port == LanPort) return;
+        LanPort = port;
+        AppSettings.SetLanPort(port);
+        Logger.Info($"局域网协议监听端口已设为 {port}");
+        LanSettingsChanged?.Invoke();
+    }
+
+    private void LanScopeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LanScopeSelector is null || _loadingLan) return;
+        var scope = LanScopeSelector.SelectedIndex == 1 ? "all" : "loopback";
+        if (scope == LanScope) return;
+        LanScope = scope;
+        AppSettings.SetLanScope(scope);
+        Logger.Info($"局域网协议监听范围已设为 {(scope == "all" ? "全网卡" : "仅本机")}");
+        LanSettingsChanged?.Invoke();
+    }
+
+    private void UpdateLanControlsEnabled()
+    {
+        if (LanPortBox is null) return;
+        LanPortBox.IsEnabled = LanEnabled;
+        LanScopeSelector.IsEnabled = LanEnabled;
+    }
+
+    private void UriSchemeToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (UriSchemeToggle is null || _loadingLan) return;
+        UriSchemeEnabled = UriSchemeToggle.IsOn;
+        AppSettings.SetUriSchemeEnabled(UriSchemeEnabled);
+        Logger.Info($"smtcplayer:// 协议注册已{(UriSchemeEnabled ? "开启" : "关闭")}");
+        UriSchemeSettingChanged?.Invoke();
+    }
+
     // ============== 跳转按钮 ==============
 
     private void BackButton_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
@@ -267,6 +220,8 @@ public sealed partial class SettingsPanel : UserControl
     private void ChangePinButton_Click(object sender, RoutedEventArgs e) => PinRequested?.Invoke();
 
     private void AboutButton_Click(object sender, RoutedEventArgs e) => AboutRequested?.Invoke();
+
+    private void PluginManagerButton_Click(object sender, RoutedEventArgs e) => PluginManagerRequested?.Invoke();
 
     // ============== 播放进度校准 ==============
 
@@ -286,6 +241,7 @@ public sealed partial class SettingsPanel : UserControl
     {
         CheckUpdateButton.IsEnabled = false;
         UpdateStatusText.Text = "正在检查更新…";
+        UpdateNotesText.Visibility = Visibility.Collapsed;
         ReleaseLink.Visibility = Visibility.Collapsed;
         try
         {
@@ -297,16 +253,33 @@ public sealed partial class SettingsPanel : UserControl
             ReleaseLink.Visibility = result.Status == UpdateCheckStatus.UpdateAvailable
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            ShowUpdateNotes(result.Update?.ReleaseNotes);
         }
         catch (Exception ex)
         {
             Logger.Warn($"检查更新异常: {ex.Message}");
             UpdateStatusText.Text = $"检查失败: {ex.Message}";
+            UpdateNotesText.Visibility = Visibility.Collapsed;
         }
         finally
         {
             CheckUpdateButton.IsEnabled = true;
         }
+    }
+
+    /// <summary>展示本次更新的要点（来自站点 update.json 的 releaseNotes）。</summary>
+    private void ShowUpdateNotes(IReadOnlyList<string>? notes)
+    {
+        if (notes is not { Count: > 0 })
+        {
+            UpdateNotesText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var lines = new List<string> { "本次更新内容：" };
+        foreach (var n in notes) lines.Add("• " + n);
+        UpdateNotesText.Text = string.Join("\n", lines);
+        UpdateNotesText.Visibility = Visibility.Visible;
     }
 
     private void ReleaseLink_Click(object sender, RoutedEventArgs e)
@@ -321,7 +294,91 @@ public sealed partial class SettingsPanel : UserControl
         }
     }
 
+    /// <summary>查看更新日志：读取站点 update.json（CHANGELOG 同源），弹窗展示"这次更新了什么"。</summary>
+    private async void ViewChangelog_Click(object sender, RoutedEventArgs e)
+    {
+        ViewChangelogButton.IsEnabled = false;
+        try
+        {
+            var checker = new UpdateChecker();
+            var manifest = await checker.FetchManifestAsync();
+            if (manifest is null || manifest.ReleaseNotes.Count == 0)
+            {
+                await ShowInfoDialogAsync("更新日志", "暂时无法获取更新日志，请稍后重试或前往网页查看。");
+                return;
+            }
+
+            var panel = new StackPanel { Spacing = 6 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(manifest.ReleaseDate)
+                    ? $"v{manifest.LatestVersion}"
+                    : $"v{manifest.LatestVersion} · {manifest.ReleaseDate}",
+                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            });
+            foreach (var note in manifest.ReleaseNotes)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "• " + note,
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+            panel.Children.Add(new HyperlinkButton
+            {
+                Content = "在网页查看完整日志",
+                NavigateUri = new Uri(string.IsNullOrWhiteSpace(manifest.UpdateUrl)
+                    ? UpdateChecker.UpdatePageUrl
+                    : manifest.UpdateUrl),
+                FontSize = 12,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+
+            var dlg = new ContentDialog
+            {
+                Title = "更新日志",
+                Content = new ScrollViewer
+                {
+                    Content = panel,
+                    MaxHeight = 380,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollMode = ScrollMode.Disabled,
+                },
+                CloseButtonText = "关闭",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot,
+            };
+            await dlg.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"查看更新日志失败: {ex.Message}");
+            await ShowInfoDialogAsync("更新日志", $"获取失败: {ex.Message}");
+        }
+        finally
+        {
+            ViewChangelogButton.IsEnabled = true;
+        }
+    }
+
+    private async Task ShowInfoDialogAsync(string title, string message)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+        };
+        await dlg.ShowAsync();
+    }
+
     // ============== 日志工具 ==============
+
+    private void OpenLogViewerButton_Click(object sender, RoutedEventArgs e) => LogViewerRequested?.Invoke();
 
     private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
     {
